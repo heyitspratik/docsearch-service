@@ -3,6 +3,31 @@
 from enum import StrEnum
 
 
+class Environment(StrEnum):
+    """Deployment environment."""
+
+    LOCAL = "local"
+    TEST = "test"
+    DEV = "dev"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+    @property
+    def is_production(self) -> bool:
+        """Whether this environment holds real user data."""
+        return self is Environment.PRODUCTION
+
+
+class LogLevel(StrEnum):
+    """Standard library log levels."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
 class HealthStatus(StrEnum):
     """Status reported by the health endpoints."""
 

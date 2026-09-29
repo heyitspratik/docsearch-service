@@ -6,7 +6,6 @@ grepped for by the name used in ``.env``.
 
 from __future__ import annotations
 
-import enum
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote_plus
@@ -14,32 +13,9 @@ from urllib.parse import quote_plus
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.constants import Environment, LogLevel
+
 ASYNC_DRIVERS = ("+asyncpg", "+aiomysql", "+asyncmy", "+aiosqlite", "+psycopg")
-
-
-class Environment(enum.StrEnum):
-    """Deployment environment."""
-
-    LOCAL = "local"
-    TEST = "test"
-    DEV = "dev"
-    STAGING = "staging"
-    PRODUCTION = "production"
-
-    @property
-    def is_production(self) -> bool:
-        """Whether this environment holds real user data."""
-        return self is Environment.PRODUCTION
-
-
-class LogLevel(enum.StrEnum):
-    """Standard library log levels."""
-
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
 
 
 class Settings(BaseSettings):

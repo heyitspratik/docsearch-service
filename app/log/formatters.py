@@ -76,9 +76,10 @@ class ConsoleFormatter(logging.Formatter):
     }
     _RESET = "\033[0m"
 
-    def __init__(self, *, use_colour: bool = True) -> None:
+    def __init__(self, *, use_colour: bool = True, show_name: bool = True) -> None:
+        name = "%(name)s: " if show_name else ""
         super().__init__(
-            fmt="%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s",
+            fmt=f"%(asctime)s %(levelname)-8s [%(request_id)s] {name}%(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         self.use_colour = use_colour
