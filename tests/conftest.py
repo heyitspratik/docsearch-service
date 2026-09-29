@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.application import Application
-from app.settings import Environment, Settings
+from app.constants import Environment
+from app.settings import Settings
 
 
 @pytest.fixture
