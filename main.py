@@ -2,19 +2,38 @@
 
 import uvicorn
 
-from app.settings import settings
+from app.log import get_logger
+from app.settings import get_settings
+
+logger = get_logger(__name__)
 
 
-def main() -> None:  # noqa: D401
+def main() -> None:
     """Run uvicorn using settings from the project."""
+    settings = get_settings()
+
+    workers = settings.APP_WORKERS
+    reload = settings.APP_RELOAD
+
+    # uvicorn cannot do both: reload needs a single supervised process.
+    if reload and workers > 1:
+        logger.warning(
+            f"APP_RELOAD=true is incompatible with APP_WORKERS={workers}; "
+            f"running a single worker"
+        )
+        workers = 1
+
     uvicorn.run(
         "app.application:get_app",
         factory=True,
-        workers=settings.workers_count,
-        host=settings.host,
-        port=settings.port,
-        reload=settings.reload,
-        log_level=settings.log_level.value.lower(),
+        host=settings.APP_HOST,
+        port=settings.APP_PORT,
+        workers=None if reload else workers,
+        reload=reload,
+        # Logging is configured in the application factory; letting uvicorn
+        # install its own would overwrite the formatter.
+        log_config=None,
+        access_log=False,
     )
 
 
