@@ -38,6 +38,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await redis_client.init_redis()
         logger.info("Redis connection established")
 
+    if settings.APP_RELOAD:
+        logger.info(
+            f"Uvicorn Running on http://{settings.APP_HOST}:{settings.APP_PORT} "
+            f"(Press CTRL+C to quit)"
+        )
+
     try:
         yield
     finally:

@@ -30,10 +30,7 @@ def main() -> None:
         port=settings.APP_PORT,
         workers=None if reload else workers,
         reload=reload,
-        # Logging is configured in the application factory; letting uvicorn
-        # install its own would overwrite the formatter.
         log_config=None,
-        access_log=False,
     )
 
 
