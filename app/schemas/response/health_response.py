@@ -18,7 +18,6 @@ class ComponentHealth(BaseModel):
 class HealthResponse(BaseModel):
     """Liveness: the process is running."""
 
-    status: Literal[HealthStatus.HEALTHY] = HealthStatus.HEALTHY
     service: str
     timestamp: datetime
 
@@ -26,7 +25,6 @@ class HealthResponse(BaseModel):
 class DetailedHealthResponse(BaseModel):
     """Readiness: the process can serve traffic."""
 
-    status: Literal[HealthStatus.HEALTHY, HealthStatus.DEGRADED]
     service: str
     timestamp: datetime
     components: dict[str, ComponentHealth] = Field(default_factory=dict)
