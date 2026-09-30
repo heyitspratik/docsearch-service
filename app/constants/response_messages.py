@@ -24,6 +24,10 @@ class ErrorMessages:
 class HealthMessages:
     """Messages returned by the health endpoints."""
 
+    SERVICE_HEALTHY = "Service is healthy"
+    SERVICE_DEGRADED = "Service is degraded"
+    VERSION_FETCHED = "Version fetched successfully"
+
     DATABASE_CONNECTION_SUCCESSFUL = "Database connection successful"
     DATABASE_CONNECTION_FAILED = "Database connection failed"
     REDIS_CONNECTION_SUCCESSFUL = "Redis connection successful"

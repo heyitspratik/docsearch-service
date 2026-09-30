@@ -7,6 +7,15 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class BaseResponse[PayloadT](BaseModel):
+    """Envelope for every successful response."""
+
+    message: str
+    payload: PayloadT
+    status: int
+    detail: str | None = None
+
+
 class ErrorDetail(BaseModel):
     """A single field-level problem."""
 

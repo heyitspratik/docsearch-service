@@ -33,7 +33,6 @@ class HealthStatus(StrEnum):
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
-    DEGRADED = "degraded"
 
 
 class ErrorCode(StrEnum):

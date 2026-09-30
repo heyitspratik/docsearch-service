@@ -14,6 +14,7 @@ from app.clients.database.client import db_client
 from app.clients.redis.client import redis_client
 from app.constants import HealthMessages, HealthStatus
 from app.schemas.response import (
+    BaseResponse,
     ComponentHealth,
     DetailedHealthResponse,
     HealthResponse,
@@ -29,22 +30,26 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings  # type: ignore[no-any-return]
 
 
-@health_router.get("/health", response_model=HealthResponse)
-async def health_check(request: Request) -> HealthResponse:
+@health_router.get("/health", response_model=BaseResponse[HealthResponse])
+async def health_check(request: Request) -> BaseResponse[HealthResponse]:
     """Basic health check endpoint.
 
     Returns:
-        HealthResponse: Indicates the process is able to serve a request.
+        BaseResponse[HealthResponse]: The process is able to serve a request.
     """
-    return HealthResponse(
-        service=_settings(request).APP_NAME,
-        timestamp=datetime.now(UTC),
+    return BaseResponse(
+        message=HealthMessages.SERVICE_HEALTHY,
+        payload=HealthResponse(
+            service=_settings(request).APP_NAME,
+            timestamp=datetime.now(UTC),
+        ),
+        status=status.HTTP_200_OK,
     )
 
 
 @health_router.get(
     "/health/detailed",
-    response_model=DetailedHealthResponse,
+    response_model=BaseResponse[DetailedHealthResponse],
     responses={
         status.HTTP_503_SERVICE_UNAVAILABLE: {
             "description": HealthMessages.DEPENDENCIES_UNREACHABLE
@@ -53,14 +58,15 @@ async def health_check(request: Request) -> HealthResponse:
 )
 async def detailed_health_check(
     request: Request, response: Response
-) -> DetailedHealthResponse:
+) -> BaseResponse[DetailedHealthResponse]:
     """Detailed health check that verifies connectivity to dependencies.
 
     Only enabled clients are probed: a dependency the service opted out of
     cannot be unhealthy.
 
     Returns:
-        DetailedHealthResponse: Per-dependency status, 503 when degraded.
+        BaseResponse[DetailedHealthResponse]: Per-dependency status, 503
+        when degraded.
     """
     settings = _settings(request)
     components: dict[str, ComponentHealth] = {}
@@ -84,27 +90,38 @@ async def detailed_health_check(
         )
 
     overall_healthy = all(c.status == HealthStatus.HEALTHY for c in components.values())
-    if not overall_healthy:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    response.status_code = (
+        status.HTTP_200_OK if overall_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
 
-    return DetailedHealthResponse(
-        status=HealthStatus.HEALTHY if overall_healthy else HealthStatus.DEGRADED,
-        service=settings.APP_NAME,
-        timestamp=datetime.now(UTC),
-        components=components,
+    return BaseResponse(
+        message=HealthMessages.SERVICE_HEALTHY
+        if overall_healthy
+        else HealthMessages.SERVICE_DEGRADED,
+        payload=DetailedHealthResponse(
+            service=settings.APP_NAME,
+            timestamp=datetime.now(UTC),
+            components=components,
+        ),
+        status=response.status_code,
+        detail=None if overall_healthy else HealthMessages.DEPENDENCIES_UNREACHABLE,
     )
 
 
-@health_router.get("/version", response_model=VersionResponse)
-async def version(request: Request) -> VersionResponse:
+@health_router.get("/version", response_model=BaseResponse[VersionResponse])
+async def version(request: Request) -> BaseResponse[VersionResponse]:
     """Report the service name, version and environment.
 
     Returns:
-        VersionResponse: Build and environment identity.
+        BaseResponse[VersionResponse]: Build and environment identity.
     """
     settings = _settings(request)
-    return VersionResponse(
-        name=settings.APP_NAME,
-        version=settings.APP_VERSION,
-        environment=settings.APP_ENVIRONMENT.value,
+    return BaseResponse(
+        message=HealthMessages.VERSION_FETCHED,
+        payload=VersionResponse(
+            name=settings.APP_NAME,
+            version=settings.APP_VERSION,
+            environment=settings.APP_ENVIRONMENT.value,
+        ),
+        status=status.HTTP_200_OK,
     )
