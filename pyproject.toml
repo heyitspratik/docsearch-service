@@ -14,6 +14,27 @@ dependencies = [
     "python-multipart>=0.0.20",
     "sqlalchemy[asyncio]>=2.0.36",
     "alembic>=1.14.0",
+    "qdrant-client>=1.20.0",
+    "pymongo>=4.19.0",
+    "aioboto3>=15.5.0",
+    "celery[redis]>=5.6.3",
+    "fastembed>=0.9.1",
+    "docling>=2.142.1",
+    "anthropic>=2.3.0",
+    "openai>=3.37.0",
+    "pyjwt[crypto]>=2.15.1",
+    "opentelemetry-api>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
+    "opentelemetry-instrumentation-celery>=0.66b1",
+    "opentelemetry-instrumentation-httpx>=0.66b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.66b1",
+    "opentelemetry-instrumentation-redis>=0.66b1",
+    "opentelemetry-instrumentation-pymongo>=0.66b1",
+    "opentelemetry-instrumentation-botocore>=0.66b1",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +52,17 @@ dev = [
     "pre-commit>=4.0.1",
     "httpx>=0.28.1",
 ]
+
+# Docling pulls in torch; the default Linux wheel bundles CUDA (several GB).
+# Everything here runs on CPU, so torch comes from the CPU-only index.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
@@ -103,6 +135,11 @@ exclude = ["alembic/versions/", "\\.venv/"]
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+# These ship no type information; strict mode stays on everywhere else.
+[[tool.mypy.overrides]]
+module = ["aioboto3.*", "botocore.*", "celery.*", "kombu.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_typed = true

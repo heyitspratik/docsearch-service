@@ -32,6 +32,12 @@ class HealthMessages:
     DATABASE_CONNECTION_FAILED = "Database connection failed"
     REDIS_CONNECTION_SUCCESSFUL = "Redis connection successful"
     REDIS_CONNECTION_FAILED = "Redis connection failed"
+    QDRANT_CONNECTION_SUCCESSFUL = "Qdrant connection successful"
+    QDRANT_CONNECTION_FAILED = "Qdrant connection failed"
+    MONGO_CONNECTION_SUCCESSFUL = "MongoDB connection successful"
+    MONGO_CONNECTION_FAILED = "MongoDB connection failed"
+    S3_CONNECTION_SUCCESSFUL = "S3 bucket reachable"
+    S3_CONNECTION_FAILED = "S3 bucket unreachable"
     DEPENDENCIES_UNREACHABLE = "One or more dependencies are unreachable"
 
 
@@ -50,3 +56,21 @@ class RedisMessages:
     EXTRA_REQUIRED = (
         "REDIS_ENABLED=true requires the 'redis' extra: uv sync --extra redis"
     )
+
+
+class QdrantMessages:
+    """Messages raised by the qdrant client."""
+
+    CLIENT_NOT_INITIALIZED = "Qdrant client not initialized"
+
+
+class MongoMessages:
+    """Messages raised by the mongo client."""
+
+    CLIENT_NOT_INITIALIZED = "MongoDB client not initialized"
+
+
+class S3Messages:
+    """Messages raised by the s3 client."""
+
+    CLIENT_NOT_INITIALIZED = "S3 client not initialized"

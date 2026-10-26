@@ -32,3 +32,4 @@ tests
 
 docker-compose*.yml
 .pre-commit-config.yaml
+docker
