@@ -39,4 +39,24 @@ repos:
           - fastapi>=0.116.1
           - sqlalchemy[asyncio]>=2.0.36
           - redis>=5.2.1
+          - qdrant-client>=1.20.0
+          - pymongo>=4.19.0
+          - aioboto3>=15.5.0
+          - celery[redis]>=5.6.3
+          - anthropic>=2.3.0
+          - openai>=3.37.0
+          - pyjwt[crypto]>=2.15.1
+          - opentelemetry-api>=1.45.1
+          - opentelemetry-sdk>=1.45.1
+          # fastembed and docling pull in torch; the CPU index keeps the hook
+          # venv from downloading the CUDA build.
+          - --extra-index-url=https://download.pytorch.org/whl/cpu
+          - fastembed>=0.9.1
+          - docling>=2.142.1
         args: [--config-file=pyproject.toml]
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.15.1
+    hooks:
+      # Runs hadolint from its Docker image, so no local install is needed.
+      - id: hadolint-docker

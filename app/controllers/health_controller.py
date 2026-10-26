@@ -11,7 +11,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Request, Response, status
 
 from app.clients.database.client import db_client
+from app.clients.mongo.client import mongo_client
+from app.clients.qdrant.client import qdrant_client
 from app.clients.redis.client import redis_client
+from app.clients.s3.client import s3_client
 from app.constants import HealthMessages, HealthStatus
 from app.schemas.response import (
     BaseResponse,
@@ -87,6 +90,33 @@ async def detailed_health_check(
             message=HealthMessages.REDIS_CONNECTION_SUCCESSFUL
             if healthy
             else HealthMessages.REDIS_CONNECTION_FAILED,
+        )
+
+    if settings.QDRANT_ENABLED:
+        healthy = await qdrant_client.health_check()
+        components["qdrant"] = ComponentHealth(
+            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+            message=HealthMessages.QDRANT_CONNECTION_SUCCESSFUL
+            if healthy
+            else HealthMessages.QDRANT_CONNECTION_FAILED,
+        )
+
+    if settings.MONGO_ENABLED:
+        healthy = await mongo_client.health_check()
+        components["mongo"] = ComponentHealth(
+            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+            message=HealthMessages.MONGO_CONNECTION_SUCCESSFUL
+            if healthy
+            else HealthMessages.MONGO_CONNECTION_FAILED,
+        )
+
+    if settings.S3_ENABLED:
+        healthy = await s3_client.health_check()
+        components["s3"] = ComponentHealth(
+            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+            message=HealthMessages.S3_CONNECTION_SUCCESSFUL
+            if healthy
+            else HealthMessages.S3_CONNECTION_FAILED,
         )
 
     overall_healthy = all(c.status == HealthStatus.HEALTHY for c in components.values())

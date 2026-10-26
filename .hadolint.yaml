@@ -1,0 +1,4 @@
+ignored:
+  # Pinning apt package versions breaks builds once Debian drops the old
+  # version from its mirrors; the bookworm base image already fixes the release.
+  - DL3008
