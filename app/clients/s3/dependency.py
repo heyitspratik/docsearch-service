@@ -7,7 +7,7 @@ from fastapi import Depends
 from app.clients.s3.client import AioS3Client, s3_client
 
 
-def get_s3() -> AioS3Client:
+async def get_s3() -> AioS3Client:
     """Dependency for getting the shared S3 client."""
     return s3_client.client
 

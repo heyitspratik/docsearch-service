@@ -8,7 +8,7 @@ from qdrant_client import AsyncQdrantClient
 from app.clients.qdrant.client import qdrant_client
 
 
-def get_qdrant() -> AsyncQdrantClient:
+async def get_qdrant() -> AsyncQdrantClient:
     """Dependency for getting the shared Qdrant client."""
     return qdrant_client.client
 

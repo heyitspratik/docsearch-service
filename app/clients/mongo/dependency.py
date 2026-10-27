@@ -8,7 +8,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.clients.mongo.client import MongoDocument, mongo_client
 
 
-def get_mongo() -> AsyncDatabase[MongoDocument]:
+async def get_mongo() -> AsyncDatabase[MongoDocument]:
     """Dependency for getting the shared application database."""
     return mongo_client.database
 
