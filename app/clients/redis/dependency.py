@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 
-def get_redis() -> "Redis":
+async def get_redis() -> "Redis":
     """Dependency for getting the shared Redis client."""
     return redis_client.client
 
