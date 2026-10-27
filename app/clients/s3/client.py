@@ -57,7 +57,10 @@ class S3Client:
                     # SeaweedFS (and most self-hosted S3) only understands
                     # host/bucket/key, not bucket.host/key.
                     s3={"addressing_style": "path"},
-                    retries={"max_attempts": settings.S3_MAX_ATTEMPTS, "mode": "standard"},
+                    retries={
+                        "max_attempts": settings.S3_MAX_ATTEMPTS,
+                        "mode": "standard",
+                    },
                 ),
             )
         )
