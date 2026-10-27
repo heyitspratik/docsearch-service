@@ -47,7 +47,7 @@ async def test_detailed_health_is_503_when_a_dependency_is_down(
         APP_ENVIRONMENT=Environment.TEST,
         DB_ENABLED=True,
         DB_USER="test",
-        DB_PASSWORD="test",  # noqa: S106
+        DB_PASSWORD="test",
         DB_NAME="test",
     )
     app = Application.get_app(settings)
@@ -86,7 +86,7 @@ async def test_detailed_health_reports_new_clients_and_503_if_one_is_down(
         MONGO_ENABLED=True,
         S3_ENABLED=True,
         S3_ACCESS_KEY_ID="test",
-        S3_SECRET_ACCESS_KEY="test",  # noqa: S106
+        S3_SECRET_ACCESS_KEY="test",
     )
     app = Application.get_app(settings)
 
