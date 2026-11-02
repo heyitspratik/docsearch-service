@@ -6,6 +6,7 @@ belongs there instead, so there is only ever one definition.
 
 from app.constants.enums import Environment, ErrorCode, HealthStatus, LogLevel
 from app.constants.response_messages import (
+    AuthMessages,
     DatabaseMessages,
     ErrorMessages,
     HealthMessages,
@@ -13,9 +14,11 @@ from app.constants.response_messages import (
     QdrantMessages,
     RedisMessages,
     S3Messages,
+    UserMessages,
 )
 
 __all__ = [
+    "AuthMessages",
     "DatabaseMessages",
     "Environment",
     "ErrorCode",
@@ -27,4 +30,5 @@ __all__ = [
     "QdrantMessages",
     "RedisMessages",
     "S3Messages",
+    "UserMessages",
 ]

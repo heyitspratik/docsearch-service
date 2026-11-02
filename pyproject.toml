@@ -35,6 +35,8 @@ dependencies = [
     "opentelemetry-instrumentation-botocore>=0.66b1",
     "torch>=2.14.1",
     "torchvision>=0.29.1",
+    "fastapi-utils>=0.8.0",
+    "typing-inspect>=0.9.0",
 ]
 
 [project.optional-dependencies]

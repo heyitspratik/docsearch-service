@@ -7,6 +7,8 @@ shapes from the same paths.
 
 from fastapi import APIRouter
 
+from app.controllers.user_controller import user_router
+
 api_router = APIRouter()
 
 v1_router = APIRouter(prefix="/v1")
@@ -14,6 +16,7 @@ v1_router = APIRouter(prefix="/v1")
 # Register feature routers on the version they belong to, for example:
 #   from app.controllers.document_controller import document_router
 #   v1_router.include_router(document_router, prefix="/documents", tags=["Documents"])
+v1_router.include_router(user_router, prefix="/users", tags=["Users"])
 
 api_router.include_router(v1_router)
 

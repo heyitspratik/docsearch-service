@@ -158,7 +158,8 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1
-    command: ["start-dev"]
+    # --import-realm loads keycloak/*.json, skipping realms that already exist.
+    command: ["start-dev", "--import-realm"]
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
@@ -173,6 +174,8 @@ services:
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
     ports:
       - "${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
