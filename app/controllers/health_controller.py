@@ -9,6 +9,7 @@ from the load balancer but left alive to recover.
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request, Response, status
+from fastapi_utils.cbv import cbv
 
 from app.clients.database.client import db_client
 from app.clients.mongo.client import mongo_client
@@ -25,7 +26,9 @@ from app.schemas.response import (
 )
 from app.settings import Settings
 
-health_router = APIRouter(tags=["Health"])
+# Tags go on include_router, not here: @cbv re-includes the routes into this
+# router, which would add a router-level tag a second time.
+health_router = APIRouter()
 
 
 def _settings(request: Request) -> Settings:
@@ -33,125 +36,131 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings  # type: ignore[no-any-return]
 
 
-@health_router.get("/health", response_model=BaseResponse[HealthResponse])
-async def health_check(request: Request) -> BaseResponse[HealthResponse]:
-    """Basic health check endpoint.
+@cbv(health_router)
+class HealthController:
+    """Liveness, readiness and version endpoints."""
 
-    Returns:
-        BaseResponse[HealthResponse]: The process is able to serve a request.
-    """
-    return BaseResponse(
-        message=HealthMessages.SERVICE_HEALTHY,
-        payload=HealthResponse(
-            service=_settings(request).APP_NAME,
-            timestamp=datetime.now(UTC),
-        ),
-        status=status.HTTP_200_OK,
+    @health_router.get("/health", response_model=BaseResponse[HealthResponse])
+    async def health_check(self, request: Request) -> BaseResponse[HealthResponse]:
+        """Basic health check endpoint.
+
+        Returns:
+            BaseResponse[HealthResponse]: The process is able to serve a request.
+        """
+        return BaseResponse(
+            message=HealthMessages.SERVICE_HEALTHY,
+            payload=HealthResponse(
+                service=_settings(request).APP_NAME,
+                timestamp=datetime.now(UTC),
+            ),
+            status=status.HTTP_200_OK,
+        )
+
+    @health_router.get(
+        "/health/detailed",
+        response_model=BaseResponse[DetailedHealthResponse],
+        responses={
+            status.HTTP_503_SERVICE_UNAVAILABLE: {
+                "description": HealthMessages.DEPENDENCIES_UNREACHABLE
+            }
+        },
     )
+    async def detailed_health_check(
+        self, request: Request, response: Response
+    ) -> BaseResponse[DetailedHealthResponse]:
+        """Detailed health check that verifies connectivity to dependencies.
 
+        Only enabled clients are probed: a dependency the service opted out of
+        cannot be unhealthy.
 
-@health_router.get(
-    "/health/detailed",
-    response_model=BaseResponse[DetailedHealthResponse],
-    responses={
-        status.HTTP_503_SERVICE_UNAVAILABLE: {
-            "description": HealthMessages.DEPENDENCIES_UNREACHABLE
-        }
-    },
-)
-async def detailed_health_check(
-    request: Request, response: Response
-) -> BaseResponse[DetailedHealthResponse]:
-    """Detailed health check that verifies connectivity to dependencies.
+        Returns:
+            BaseResponse[DetailedHealthResponse]: Per-dependency status, 503
+            when degraded.
+        """
+        settings = _settings(request)
+        components: dict[str, ComponentHealth] = {}
 
-    Only enabled clients are probed: a dependency the service opted out of
-    cannot be unhealthy.
+        if settings.DB_ENABLED:
+            healthy = await db_client.health_check()
+            components["database"] = ComponentHealth(
+                status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+                message=HealthMessages.DATABASE_CONNECTION_SUCCESSFUL
+                if healthy
+                else HealthMessages.DATABASE_CONNECTION_FAILED,
+            )
 
-    Returns:
-        BaseResponse[DetailedHealthResponse]: Per-dependency status, 503
-        when degraded.
-    """
-    settings = _settings(request)
-    components: dict[str, ComponentHealth] = {}
+        if settings.REDIS_ENABLED:
+            healthy = await redis_client.health_check()
+            components["redis"] = ComponentHealth(
+                status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+                message=HealthMessages.REDIS_CONNECTION_SUCCESSFUL
+                if healthy
+                else HealthMessages.REDIS_CONNECTION_FAILED,
+            )
 
-    if settings.DB_ENABLED:
-        healthy = await db_client.health_check()
-        components["database"] = ComponentHealth(
-            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
-            message=HealthMessages.DATABASE_CONNECTION_SUCCESSFUL
-            if healthy
-            else HealthMessages.DATABASE_CONNECTION_FAILED,
+        if settings.QDRANT_ENABLED:
+            healthy = await qdrant_client.health_check()
+            components["qdrant"] = ComponentHealth(
+                status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+                message=HealthMessages.QDRANT_CONNECTION_SUCCESSFUL
+                if healthy
+                else HealthMessages.QDRANT_CONNECTION_FAILED,
+            )
+
+        if settings.MONGO_ENABLED:
+            healthy = await mongo_client.health_check()
+            components["mongo"] = ComponentHealth(
+                status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+                message=HealthMessages.MONGO_CONNECTION_SUCCESSFUL
+                if healthy
+                else HealthMessages.MONGO_CONNECTION_FAILED,
+            )
+
+        if settings.S3_ENABLED:
+            healthy = await s3_client.health_check()
+            components["s3"] = ComponentHealth(
+                status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
+                message=HealthMessages.S3_CONNECTION_SUCCESSFUL
+                if healthy
+                else HealthMessages.S3_CONNECTION_FAILED,
+            )
+
+        overall_healthy = all(
+            c.status == HealthStatus.HEALTHY for c in components.values()
+        )
+        response.status_code = (
+            status.HTTP_200_OK
+            if overall_healthy
+            else status.HTTP_503_SERVICE_UNAVAILABLE
         )
 
-    if settings.REDIS_ENABLED:
-        healthy = await redis_client.health_check()
-        components["redis"] = ComponentHealth(
-            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
-            message=HealthMessages.REDIS_CONNECTION_SUCCESSFUL
-            if healthy
-            else HealthMessages.REDIS_CONNECTION_FAILED,
+        return BaseResponse(
+            message=HealthMessages.SERVICE_HEALTHY
+            if overall_healthy
+            else HealthMessages.SERVICE_DEGRADED,
+            payload=DetailedHealthResponse(
+                service=settings.APP_NAME,
+                timestamp=datetime.now(UTC),
+                components=components,
+            ),
+            status=response.status_code,
+            detail=None if overall_healthy else HealthMessages.DEPENDENCIES_UNREACHABLE,
         )
 
-    if settings.QDRANT_ENABLED:
-        healthy = await qdrant_client.health_check()
-        components["qdrant"] = ComponentHealth(
-            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
-            message=HealthMessages.QDRANT_CONNECTION_SUCCESSFUL
-            if healthy
-            else HealthMessages.QDRANT_CONNECTION_FAILED,
+    @health_router.get("/version", response_model=BaseResponse[VersionResponse])
+    async def version(self, request: Request) -> BaseResponse[VersionResponse]:
+        """Report the service name, version and environment.
+
+        Returns:
+            BaseResponse[VersionResponse]: Build and environment identity.
+        """
+        settings = _settings(request)
+        return BaseResponse(
+            message=HealthMessages.VERSION_FETCHED,
+            payload=VersionResponse(
+                name=settings.APP_NAME,
+                version=settings.APP_VERSION,
+                environment=settings.APP_ENVIRONMENT.value,
+            ),
+            status=status.HTTP_200_OK,
         )
-
-    if settings.MONGO_ENABLED:
-        healthy = await mongo_client.health_check()
-        components["mongo"] = ComponentHealth(
-            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
-            message=HealthMessages.MONGO_CONNECTION_SUCCESSFUL
-            if healthy
-            else HealthMessages.MONGO_CONNECTION_FAILED,
-        )
-
-    if settings.S3_ENABLED:
-        healthy = await s3_client.health_check()
-        components["s3"] = ComponentHealth(
-            status=HealthStatus.HEALTHY if healthy else HealthStatus.UNHEALTHY,
-            message=HealthMessages.S3_CONNECTION_SUCCESSFUL
-            if healthy
-            else HealthMessages.S3_CONNECTION_FAILED,
-        )
-
-    overall_healthy = all(c.status == HealthStatus.HEALTHY for c in components.values())
-    response.status_code = (
-        status.HTTP_200_OK if overall_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-    )
-
-    return BaseResponse(
-        message=HealthMessages.SERVICE_HEALTHY
-        if overall_healthy
-        else HealthMessages.SERVICE_DEGRADED,
-        payload=DetailedHealthResponse(
-            service=settings.APP_NAME,
-            timestamp=datetime.now(UTC),
-            components=components,
-        ),
-        status=response.status_code,
-        detail=None if overall_healthy else HealthMessages.DEPENDENCIES_UNREACHABLE,
-    )
-
-
-@health_router.get("/version", response_model=BaseResponse[VersionResponse])
-async def version(request: Request) -> BaseResponse[VersionResponse]:
-    """Report the service name, version and environment.
-
-    Returns:
-        BaseResponse[VersionResponse]: Build and environment identity.
-    """
-    settings = _settings(request)
-    return BaseResponse(
-        message=HealthMessages.VERSION_FETCHED,
-        payload=VersionResponse(
-            name=settings.APP_NAME,
-            version=settings.APP_VERSION,
-            environment=settings.APP_ENVIRONMENT.value,
-        ),
-        status=status.HTTP_200_OK,
-    )

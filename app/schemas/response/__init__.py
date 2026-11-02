@@ -16,6 +16,7 @@ from app.schemas.response.health_response import (
     HealthResponse,
     VersionResponse,
 )
+from app.schemas.response.user_response import UserResponse
 
 __all__ = [
     "BaseResponse",
@@ -25,5 +26,6 @@ __all__ = [
     "ErrorDetail",
     "ErrorResponse",
     "HealthResponse",
+    "UserResponse",
     "VersionResponse",
 ]

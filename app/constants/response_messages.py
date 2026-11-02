@@ -41,6 +41,22 @@ class HealthMessages:
     DEPENDENCIES_UNREACHABLE = "One or more dependencies are unreachable"
 
 
+class AuthMessages:
+    """Messages returned when a request's token is rejected."""
+
+    # S105 reads "TOKEN" in the name as a password; these are messages.
+    MISSING_TOKEN = "Missing bearer token"  # noqa: S105
+    INVALID_TOKEN = "Invalid access token"  # noqa: S105
+    TOKEN_EXPIRED = "Access token has expired"  # noqa: S105
+    KEYS_UNAVAILABLE = "Cannot verify access tokens right now"
+
+
+class UserMessages:
+    """Messages returned by the user endpoints."""
+
+    CURRENT_USER_FETCHED = "Current user fetched successfully"
+
+
 class DatabaseMessages:
     """Messages raised by the database client and services."""
 

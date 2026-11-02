@@ -81,7 +81,7 @@ class Application:
         Health sits at the root rather than under the API prefix, so probes
         do not have to track the API version.
         """
-        app.include_router(router=health_router)
+        app.include_router(router=health_router, tags=["Health"])
         app.include_router(router=api_router, prefix=settings.APP_API_PREFIX)
 
         if settings.expose_docs:
