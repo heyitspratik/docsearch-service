@@ -42,7 +42,9 @@ services:
       - "${APP_PORT:-8000}:8000"
     environment:
       <<: *app-env
-      APP_RELOAD: "false"
+      APP_RELOAD: "true"
+    volumes:
+      - ./app:/app/app:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

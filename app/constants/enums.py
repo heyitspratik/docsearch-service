@@ -1,6 +1,6 @@
 """Application enums."""
 
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 
 class Environment(StrEnum):
@@ -33,6 +33,30 @@ class HealthStatus(StrEnum):
 
     HEALTHY = "healthy"
     UNHEALTHY = "unhealthy"
+
+
+class DocumentStatus(IntEnum):
+    """Where a document is: each ingest stage, then ready, failed or deleted.
+
+    Stored as its number. A deleted document keeps its row; its chunks,
+    vectors and files are removed.
+    """
+
+    QUEUED = 1
+    EXTRACTING = 2
+    CHUNKING = 3
+    EMBEDDING = 4
+    INDEXING = 5
+    READY = 6
+    FAILED = 7
+    DELETED = 8
+
+
+class ChunkType(StrEnum):
+    """What a chunk holds. A table is always one whole chunk."""
+
+    TEXT = "text"
+    TABLE = "table"
 
 
 class ErrorCode(StrEnum):

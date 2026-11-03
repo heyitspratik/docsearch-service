@@ -130,9 +130,11 @@ Raise the classes in `app/exceptions`, never `HTTPException`:
 `ConflictError`, `UnprocessableEntityError`, `TooManyRequestsError`,
 `ExternalServiceError`, `ServiceUnavailableError`.
 
-Each error returns a stable `code` to branch on and a `request_id` to find its
-log. Unexpected errors return a generic message, so internal details never
-leak to the caller.
+Errors use the same `message`, `payload`, `status`, `detail` envelope as
+successful responses, with `payload` null. `detail` holds a stable `code` to
+branch on, any per-field `errors`, and a `request_id` to find its log.
+Unexpected errors return a generic message, so internal details never leak to
+the caller.
 
 ---
 

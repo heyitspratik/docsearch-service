@@ -90,3 +90,21 @@ class S3Messages:
     """Messages raised by the s3 client."""
 
     CLIENT_NOT_INITIALIZED = "S3 client not initialized"
+    OBJECT_NOT_FOUND = "File not found in storage"
+
+
+class UploadMessages:
+    """Why an uploaded file was rejected. Shown per file in the upload response."""
+
+    UNSUPPORTED_TYPE = "Unsupported file type. Allowed: {allowed}"
+    EMPTY_FILE = "File is empty"
+    TOO_LARGE = "File is larger than {max_mb} MB"
+    INVALID_CONTENT = "File is not a valid {extension} file"
+    TOO_MANY_FILES = "At most {max_files} files can be uploaded at once"
+    ALL_FILES_REJECTED = "None of the files could be accepted"
+
+
+class DocumentMessages:
+    """Messages returned by the document endpoints."""
+
+    UPLOAD_ACCEPTED = "Upload received; accepted files are queued for processing"
