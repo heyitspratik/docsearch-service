@@ -6,10 +6,11 @@ responses go in their own ``<feature>_response.py``.
 
 from app.schemas.response.common_response import (
     BaseResponse,
-    ErrorBody,
     ErrorDetail,
+    ErrorInfo,
     ErrorResponse,
 )
+from app.schemas.response.document_response import UploadedFileResult
 from app.schemas.response.health_response import (
     ComponentHealth,
     DetailedHealthResponse,
@@ -22,10 +23,11 @@ __all__ = [
     "BaseResponse",
     "ComponentHealth",
     "DetailedHealthResponse",
-    "ErrorBody",
     "ErrorDetail",
+    "ErrorInfo",
     "ErrorResponse",
     "HealthResponse",
+    "UploadedFileResult",
     "UserResponse",
     "VersionResponse",
 ]

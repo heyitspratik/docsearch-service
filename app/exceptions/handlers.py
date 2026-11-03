@@ -16,7 +16,7 @@ from app.constants import ErrorCode, ErrorMessages
 from app.exceptions.base_exception import BaseError
 from app.log import get_request_id
 from app.middleware import SCOPE_REQUEST_ID_KEY
-from app.schemas.response import ErrorBody, ErrorDetail, ErrorResponse
+from app.schemas.response import ErrorDetail, ErrorInfo, ErrorResponse
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +37,13 @@ def _render(
     message: str,
     details: object = None,
 ) -> JSONResponse:
-    """Serialise an error into the standard envelope."""
+    """Serialise an error into the same envelope as a successful response."""
     body = ErrorResponse(
-        error=ErrorBody(code=code, message=message, details=details),
-        request_id=_request_id(request),
+        message=message,
+        status=status_code,
+        detail=ErrorInfo(code=code, errors=details, request_id=_request_id(request)),
     )
-    return JSONResponse(
-        status_code=status_code,
-        content=body.model_dump(mode="json", exclude_none=True),
-    )
+    return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
 
 
 def _as_details(errors: Sequence[Any]) -> list[ErrorDetail]:

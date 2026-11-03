@@ -12,6 +12,7 @@ from app.exceptions.common_exceptions import (
     UnauthorizedError,
     UnprocessableEntityError,
 )
+from app.exceptions.document_exceptions import FileValidationError
 from app.exceptions.handlers import register_exception_handlers
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "BaseError",
     "ConflictError",
     "ExternalServiceError",
+    "FileValidationError",
     "ForbiddenError",
     "NotFoundError",
     "ServiceUnavailableError",

@@ -161,7 +161,7 @@ def auth_app(app: FastAPI, verifier: JWTVerifier) -> FastAPI:
 async def test_me_without_token_is_401(auth_app: FastAPI, client: AsyncClient) -> None:
     response = await client.get(ME_URL)
     assert response.status_code == 401
-    assert response.json()["error"]["message"] == "Missing bearer token"
+    assert response.json()["message"] == "Missing bearer token"
 
 
 async def test_me_with_bad_token_is_401(auth_app: FastAPI, client: AsyncClient) -> None:
@@ -169,7 +169,7 @@ async def test_me_with_bad_token_is_401(auth_app: FastAPI, client: AsyncClient) 
         ME_URL, headers={"Authorization": f"Bearer {make_token(aud='other')}"}
     )
     assert response.status_code == 401
-    assert response.json()["error"]["message"] == "Invalid access token"
+    assert response.json()["message"] == "Invalid access token"
 
 
 async def test_me_returns_the_tokens_user(
