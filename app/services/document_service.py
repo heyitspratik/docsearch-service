@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from uuid import uuid4
 
-from fastapi import UploadFile
+from fastapi import BackgroundTasks, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DocumentStatus, UploadMessages
@@ -19,14 +19,21 @@ from app.helpers import (
 )
 from app.schemas.response import ErrorDetail, UploadedFileResult
 from app.settings import get_settings
+from app.workers.dispatch import enqueue_ingestion
 
 
 class DocumentService:
     """Everything the API does with documents."""
 
-    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        storage: ObjectStorage,
+        background_tasks: BackgroundTasks,
+    ) -> None:
         self.document_db = DocumentDBService(session)
         self.storage = storage
+        self.background_tasks = background_tasks
 
     async def upload(
         self, user: AuthenticatedUser, files: Sequence[UploadFile]
@@ -57,6 +64,10 @@ class DocumentService:
                     for result in results
                 ],
             )
+
+        accepted = [result.document_uuid for result in results if result.document_uuid]
+        # Runs after the commit (DBSession is function-scoped), so the rows exist.
+        self.background_tasks.add_task(enqueue_ingestion, accepted)
         return results
 
     async def _upload_one(

@@ -1,10 +1,12 @@
 """Shared test fixtures."""
 
+import os
 from collections.abc import AsyncIterator
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.application import Application
 from app.constants import Environment
@@ -48,3 +50,29 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
         ) as http_client,
     ):
         yield http_client
+
+
+@pytest.fixture
+async def db_session() -> AsyncIterator[AsyncSession]:
+    """A real Postgres session whose work is rolled back when the test ends.
+
+    CI provides Postgres with migrations applied; locally the test is skipped
+    unless the ``DB_*`` variables point at a migrated database.
+    """
+    engine = create_async_engine(Settings().db_dsn)
+    try:
+        connection = await engine.connect()
+    except Exception as e:
+        await engine.dispose()
+        if os.environ.get("CI"):
+            raise
+        pytest.skip(f"Postgres not reachable ({e.__class__.__name__}); set DB_*")
+    transaction = await connection.begin()
+    session = AsyncSession(bind=connection, join_transaction_mode="create_savepoint")
+    try:
+        yield session
+    finally:
+        await session.close()
+        await transaction.rollback()
+        await connection.close()
+        await engine.dispose()
