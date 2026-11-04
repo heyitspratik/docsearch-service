@@ -11,6 +11,7 @@ from app.constants.enums import (
     ErrorCode,
     HealthStatus,
     LogLevel,
+    TaskQueue,
 )
 from app.constants.response_messages import (
     AuthMessages,
@@ -42,6 +43,7 @@ __all__ = [
     "QdrantMessages",
     "RedisMessages",
     "S3Messages",
+    "TaskQueue",
     "UploadMessages",
     "UserMessages",
 ]

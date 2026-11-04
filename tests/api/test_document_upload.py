@@ -1,18 +1,13 @@
-"""POST /api/v1/documents/upload against a real Postgres.
+"""POST /api/v1/documents/upload against a real Postgres (see ``db_session``)."""
 
-Each test runs inside a transaction that is rolled back, so nothing is left
-behind. CI provides Postgres with migrations applied; locally the tests are
-skipped unless the ``DB_*`` variables point at a migrated database.
-"""
-
-import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.database.dependency import get_db
 from app.clients.s3.dependency import get_storage
@@ -29,30 +24,14 @@ PDF = b"%PDF-1.7\n%%EOF"
 
 
 @pytest.fixture
-async def db_session() -> AsyncIterator[AsyncSession]:
-    """A session whose work is rolled back when the test ends."""
-    engine = create_async_engine(Settings().db_dsn)
-    try:
-        connection = await engine.connect()
-    except Exception as e:
-        await engine.dispose()
-        if os.environ.get("CI"):
-            raise
-        pytest.skip(f"Postgres not reachable ({e.__class__.__name__}); set DB_*")
-    transaction = await connection.begin()
-    session = AsyncSession(bind=connection, join_transaction_mode="create_savepoint")
-    try:
-        yield session
-    finally:
-        await session.close()
-        await transaction.rollback()
-        await connection.close()
-        await engine.dispose()
+def storage() -> InMemoryStorage:
+    return InMemoryStorage()
 
 
 @pytest.fixture
-def storage() -> InMemoryStorage:
-    return InMemoryStorage()
+def enqueued() -> list[UUID]:
+    """Documents the upload sent for ingestion, instead of real Celery jobs."""
+    return []
 
 
 @pytest.fixture
@@ -60,6 +39,7 @@ def upload_app(
     app: FastAPI,
     db_session: AsyncSession,
     storage: InMemoryStorage,
+    enqueued: list[UUID],
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
     """The app with a fixed user, the test session, fake storage, small limits."""
@@ -72,6 +52,11 @@ def upload_app(
     app.dependency_overrides[get_current_user] = lambda: USER
     limits = Settings(_env_file=None, UPLOAD_MAX_FILES=3, UPLOAD_MAX_FILE_SIZE_MB=1)
     monkeypatch.setattr(document_service, "get_settings", lambda: limits)
+
+    def record(document_uuids: Iterable[UUID]) -> None:
+        enqueued.extend(document_uuids)
+
+    monkeypatch.setattr(document_service, "enqueue_ingestion", record)
     return app
 
 
@@ -81,6 +66,7 @@ async def test_accepts_valid_files_and_reports_rejected_ones(
     client: AsyncClient,
     db_session: AsyncSession,
     storage: InMemoryStorage,
+    enqueued: list[UUID],
 ) -> None:
     response = await client.post(
         URL,
@@ -112,11 +98,16 @@ async def test_accepts_valid_files_and_reports_rejected_ones(
     assert document.size_bytes == len(PDF)
     assert document.status == DocumentStatus.QUEUED
     assert storage.objects[document.storage_key] == (PDF, "application/pdf")
+    # Only the accepted file is sent for ingestion.
+    assert enqueued == [UUID(accepted["document_uuid"])]
 
 
 @pytest.mark.integration
 async def test_every_file_rejected_is_a_400_with_a_reason_per_file(
-    upload_app: FastAPI, client: AsyncClient, storage: InMemoryStorage
+    upload_app: FastAPI,
+    client: AsyncClient,
+    storage: InMemoryStorage,
+    enqueued: list[UUID],
 ) -> None:
     response = await client.post(
         URL,
@@ -134,6 +125,7 @@ async def test_every_file_rejected_is_a_400_with_a_reason_per_file(
         {"field": "fake.pdf", "message": "File is not a valid .pdf file", "type": None},
     ]
     assert storage.objects == {}
+    assert enqueued == []
 
 
 @pytest.mark.integration

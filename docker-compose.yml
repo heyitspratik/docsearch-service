@@ -1,4 +1,4 @@
-# worker and beat join in step 2.5 (Celery app), frontend in step 6.8.
+# beat joins in step 2.13, frontend in step 6.8.
 
 # Shared by every container that runs the app's code. Hostnames differ from
 # .env: localhost inside a container means the container itself.
@@ -45,6 +45,37 @@ services:
       APP_RELOAD: "true"
     volumes:
       - ./app:/app/app:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: *app-build
+    image: docsearch-app:local
+    command:
+      - watchfiles
+      - --filter
+      - python
+      - celery -A app.workers.celery_app worker -Q ingest,default --concurrency 2 --loglevel INFO
+      - /app/app
+    environment: *app-env
+    volumes:
+      - ./app:/app/app:ro
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile, status
 from fastapi_utils.cbv import cbv
 
 from app.clients.database.dependency import DBSession
@@ -33,6 +33,7 @@ class DocumentController:
         user: CurrentUser,
         session: DBSession,
         storage: StorageDep,
+        background_tasks: BackgroundTasks,
         files: Annotated[
             list[UploadFile],
             File(
@@ -50,7 +51,7 @@ class DocumentController:
         Returns:
             BaseResponse[list[UploadedFileResult]]: One result per file.
         """
-        document_service = DocumentService(session, storage)
+        document_service = DocumentService(session, storage, background_tasks)
         results = await document_service.upload(user, files)
         return BaseResponse(
             message=DocumentMessages.UPLOAD_ACCEPTED,

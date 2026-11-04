@@ -52,6 +52,13 @@ class DocumentStatus(IntEnum):
     DELETED = 8
 
 
+class TaskQueue(StrEnum):
+    """Celery queues: heavy ingestion is kept apart from quick jobs."""
+
+    INGEST = "ingest"
+    DEFAULT = "default"
+
+
 class ChunkType(StrEnum):
     """What a chunk holds. A table is always one whole chunk."""
 
