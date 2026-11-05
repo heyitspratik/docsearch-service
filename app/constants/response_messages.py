@@ -104,6 +104,13 @@ class UploadMessages:
     ALL_FILES_REJECTED = "None of the files could be accepted"
 
 
+class ExtractionMessages:
+    """Why a stored file could not be read. Saved in ``document_master.error``."""
+
+    UNREADABLE = "The file could not be read"
+    NO_TEXT = "No text was found in the file"
+
+
 class DocumentMessages:
     """Messages returned by the document endpoints."""
 

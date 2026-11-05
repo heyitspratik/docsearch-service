@@ -13,15 +13,10 @@ from starlette import status
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.constants import PROCESS_TIME_HEADER, REQUEST_ID_HEADER, SCOPE_REQUEST_ID_KEY
 from app.log import new_request_id, reset_request_id, set_request_id
 
 logger = logging.getLogger("app.access")
-
-REQUEST_ID_HEADER = "x-request-id"
-PROCESS_TIME_HEADER = "x-process-time"
-
-#: Key under which the correlation id is stored on the ASGI scope.
-SCOPE_REQUEST_ID_KEY = "app_request_id"
 
 
 class RequestContextMiddleware:

@@ -1,4 +1,4 @@
-"""File storage: where uploads and Docling JSON live, and the interface services use."""
+"""File storage: where uploads and their extracted content live, and its interface."""
 
 from typing import Protocol
 
@@ -12,9 +12,9 @@ def original_key(user_uuid: str, document_uuid: str, extension: str) -> str:
     return f"documents/{user_uuid}/{document_uuid}/original{extension}"
 
 
-def docling_json_key(user_uuid: str, document_uuid: str) -> str:
-    """Key of a document's Docling JSON, next to its original."""
-    return f"documents/{user_uuid}/{document_uuid}/docling.json"
+def extracted_key(user_uuid: str, document_uuid: str) -> str:
+    """Key of a document's extracted content (Docling JSON), next to its original."""
+    return f"documents/{user_uuid}/{document_uuid}/extracted.json"
 
 
 class ObjectStorage(Protocol):

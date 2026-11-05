@@ -1,9 +1,22 @@
-"""Shared constants.
+"""Shared constants: fixed values, enums and messages.
 
-For values used by more than one module. Anything owned by a single module
-belongs there instead, so there is only ever one definition.
+A value that needs a heavy import (such as Docling) stays in its own module,
+so importing ``app.constants`` stays cheap for the API.
 """
 
+from app.constants.constants import (
+    ASYNC_DRIVERS,
+    DOCLING_EXTENSIONS,
+    JWKS_TIMEOUT_SECONDS,
+    JWT_ALGORITHMS,
+    JWT_REQUIRED_CLAIMS,
+    LOG_RECORD_RESERVED_ATTRS,
+    MAX_FILENAME_LENGTH,
+    NAMING_CONVENTION,
+    PROCESS_TIME_HEADER,
+    REQUEST_ID_HEADER,
+    SCOPE_REQUEST_ID_KEY,
+)
 from app.constants.enums import (
     ChunkType,
     DocumentStatus,
@@ -18,6 +31,7 @@ from app.constants.response_messages import (
     DatabaseMessages,
     DocumentMessages,
     ErrorMessages,
+    ExtractionMessages,
     HealthMessages,
     MongoMessages,
     QdrantMessages,
@@ -28,6 +42,17 @@ from app.constants.response_messages import (
 )
 
 __all__ = [
+    "ASYNC_DRIVERS",
+    "DOCLING_EXTENSIONS",
+    "JWKS_TIMEOUT_SECONDS",
+    "JWT_ALGORITHMS",
+    "JWT_REQUIRED_CLAIMS",
+    "LOG_RECORD_RESERVED_ATTRS",
+    "MAX_FILENAME_LENGTH",
+    "NAMING_CONVENTION",
+    "PROCESS_TIME_HEADER",
+    "REQUEST_ID_HEADER",
+    "SCOPE_REQUEST_ID_KEY",
     "AuthMessages",
     "ChunkType",
     "DatabaseMessages",
@@ -36,6 +61,7 @@ __all__ = [
     "Environment",
     "ErrorCode",
     "ErrorMessages",
+    "ExtractionMessages",
     "HealthMessages",
     "HealthStatus",
     "LogLevel",

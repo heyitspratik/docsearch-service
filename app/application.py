@@ -4,15 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from app.constants import PROCESS_TIME_HEADER, REQUEST_ID_HEADER
 from app.controllers.health_controller import health_router
 from app.exceptions import register_exception_handlers
 from app.lifetime import lifespan
 from app.log import configure_logging, get_logger
-from app.middleware import (
-    PROCESS_TIME_HEADER,
-    REQUEST_ID_HEADER,
-    RequestContextMiddleware,
-)
+from app.middleware import RequestContextMiddleware
 from app.router import api_router
 from app.settings import Settings, get_settings
 

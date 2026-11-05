@@ -5,7 +5,7 @@ import os
 import zipfile
 from collections.abc import Callable
 
-from app.constants import UploadMessages
+from app.constants import MAX_FILENAME_LENGTH, UploadMessages
 from app.exceptions import FileValidationError
 
 
@@ -45,10 +45,6 @@ ALLOWED_TYPES: dict[str, tuple[str, Callable[[bytes], bool]]] = {
     ),
     ".txt": ("text/plain", _is_utf8_text),
 }
-
-
-#: Same length as ``document_master.filename``.
-MAX_FILENAME_LENGTH = 255
 
 
 def clean_filename(filename: str | None) -> str:
