@@ -10,18 +10,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWK, PyJWKClient
 from pydantic import BaseModel, ConfigDict
 
-from app.constants import AuthMessages
+from app.constants import (
+    JWKS_TIMEOUT_SECONDS,
+    JWT_ALGORITHMS,
+    JWT_REQUIRED_CLAIMS,
+    AuthMessages,
+)
 from app.exceptions import ServiceUnavailableError, UnauthorizedError
 from app.log import get_logger
 from app.settings import get_settings
 
 logger = get_logger(__name__)
-
-# Keycloak signs access tokens with RS256 by default. Pinning the algorithm
-# stops a token from choosing a weaker one, such as "none" or HS256.
-ALGORITHMS = ["RS256"]
-REQUIRED_CLAIMS = ["exp", "iat", "iss", "aud", "sub"]
-JWKS_TIMEOUT_SECONDS = 5.0
 
 
 class AuthenticatedUser(BaseModel):
@@ -80,10 +79,10 @@ class JWTVerifier:
             claims: dict[str, Any] = jwt.decode(
                 token,
                 key=signing_key.key,
-                algorithms=ALGORITHMS,
+                algorithms=JWT_ALGORITHMS,
                 audience=self._audience,
                 issuer=self._issuer,
-                options={"require": REQUIRED_CLAIMS},
+                options={"require": JWT_REQUIRED_CLAIMS},
             )
         except jwt.ExpiredSignatureError as e:
             raise UnauthorizedError(AuthMessages.TOKEN_EXPIRED) from e

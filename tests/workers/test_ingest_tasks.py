@@ -4,6 +4,7 @@ import subprocess
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -41,6 +42,21 @@ def test_worker_entry_point_imports_without_a_cycle() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_api_does_not_load_docling() -> None:
+    """Docling costs 3 s and 400 MB; only the worker should import it."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, app.application; sys.exit('docling' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_task_opens_clients_and_calls_the_ingestion_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,14 +73,16 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
         yield session
 
     class FakeIngestionService:
-        def __init__(self, given: object) -> None:
+        def __init__(self, given: object, storage: object) -> None:
             assert given is session
+            assert storage is not None
 
         async def ingest(self, document_uuid: UUID) -> None:
             events.append(f"ingest {document_uuid}")
 
     monkeypatch.setattr(ingest_tasks, "worker_clients", fake_clients)
     monkeypatch.setattr(ingest_tasks.db_client, "get_session", fake_get_session)
+    monkeypatch.setattr(ingest_tasks, "s3_client", SimpleNamespace(client=object()))
     monkeypatch.setattr(ingest_tasks, "IngestionService", FakeIngestionService)
     document_uuid = uuid4()
 

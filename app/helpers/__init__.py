@@ -13,7 +13,9 @@ from app.helpers.file_type_helper import (
     file_extension,
     validate_file,
 )
-from app.helpers.storage_helper import ObjectStorage, docling_json_key, original_key
+from app.helpers.storage_helper import ObjectStorage, extracted_key, original_key
+
+# extraction_helper is left out: importing Docling costs the API 3 s and 400 MB.
 
 __all__ = [
     "ALLOWED_TYPES",
@@ -22,7 +24,7 @@ __all__ = [
     "JWTVerifier",
     "ObjectStorage",
     "clean_filename",
-    "docling_json_key",
+    "extracted_key",
     "file_extension",
     "get_current_user",
     "get_jwt_verifier",

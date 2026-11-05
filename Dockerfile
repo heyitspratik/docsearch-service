@@ -39,12 +39,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
+# /home/app/.cache is pre-created so a volume mounted there is owned by app.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1001 app \
-    && useradd --system --uid 1001 --gid app --create-home app
+    && useradd --system --uid 1001 --gid app --create-home app \
+    && install -d -o app -g app /home/app/.cache
 
 WORKDIR /app
 

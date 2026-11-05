@@ -12,10 +12,9 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.constants import ErrorCode, ErrorMessages
+from app.constants import SCOPE_REQUEST_ID_KEY, ErrorCode, ErrorMessages
 from app.exceptions.base_exception import BaseError
 from app.log import get_request_id
-from app.middleware import SCOPE_REQUEST_ID_KEY
 from app.schemas.response import ErrorDetail, ErrorInfo, ErrorResponse
 
 logger = logging.getLogger(__name__)

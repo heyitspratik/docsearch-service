@@ -13,9 +13,7 @@ from urllib.parse import quote_plus
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.constants import Environment, LogLevel
-
-ASYNC_DRIVERS = ("+asyncpg", "+aiomysql", "+asyncmy", "+aiosqlite", "+psycopg")
+from app.constants import ASYNC_DRIVERS, Environment, LogLevel
 
 
 class Settings(BaseSettings):

@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 from app.clients.s3.service import S3Storage
 from app.exceptions import NotFoundError
-from app.helpers import docling_json_key, original_key
+from app.helpers import extracted_key, original_key
 
 
 class StubBody:
@@ -64,7 +64,7 @@ def test_keys_group_a_documents_files_under_one_folder() -> None:
     assert original_key("user-1", "doc-1", ".pdf") == (
         "documents/user-1/doc-1/original.pdf"
     )
-    assert docling_json_key("user-1", "doc-1") == "documents/user-1/doc-1/docling.json"
+    assert extracted_key("user-1", "doc-1") == "documents/user-1/doc-1/extracted.json"
 
 
 async def test_put_then_get_returns_the_same_bytes(
