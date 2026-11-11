@@ -10,8 +10,10 @@ from app.constants import DocumentStatus
 from app.db.models import DocumentMaster
 from app.db.services import CommonDBService
 from app.helpers import ObjectStorage, extracted_key
+from app.helpers.chunking_helper import chunk_document
 from app.helpers.extraction_helper import extract
 from app.log import get_logger
+from app.settings import get_settings
 
 logger = get_logger(__name__)
 
@@ -19,8 +21,8 @@ logger = get_logger(__name__)
 class IngestionService:
     """Turns an uploaded document into searchable chunks.
 
-    Extraction is done; chunking, embedding, indexing and status updates
-    follow in steps 2.7 to 2.10.
+    Extraction and chunking are done; embedding, indexing and status updates
+    follow in steps 2.8 to 2.10.
     """
 
     def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
@@ -58,4 +60,12 @@ class IngestionService:
         logger.info(
             f"Extracted document {document_uuid}: {len(extracted.pages)} pages, "
             f"{len(extracted.tables)} tables"
+        )
+
+        chunks = await asyncio.to_thread(
+            chunk_document, extracted, get_settings().EMBEDDING_DENSE_MODEL
+        )
+        logger.info(
+            f"Chunked document {document_uuid}: {len(chunks)} chunks, "
+            f"largest {max((c.token_count for c in chunks), default=0)} tokens"
         )

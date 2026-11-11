@@ -42,11 +42,16 @@ async def add_document(
     return document
 
 
-async def test_extracts_and_saves_the_docling_json(db_session: AsyncSession) -> None:
+async def test_extracts_saves_the_json_and_chunks(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
     storage = InMemoryStorage()
     document = await add_document(db_session, storage, DocumentStatus.QUEUED)
 
-    await IngestionService(db_session, storage).ingest(document.uuid)
+    with caplog.at_level(logging.INFO):
+        await IngestionService(db_session, storage).ingest(document.uuid)
+
+    assert f"Chunked document {document.uuid}: 1 chunks" in caplog.text
 
     data, content_type = storage.objects[extracted_key("user-1", str(document.uuid))]
     assert content_type == "application/json"

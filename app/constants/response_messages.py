@@ -111,6 +111,12 @@ class ExtractionMessages:
     NO_TEXT = "No text was found in the file"
 
 
+class EmbeddingMessages:
+    """Problems with the configured embedding model."""
+
+    UNKNOWN_MODEL = "Unknown embedding model {name}. Known models: {known}"
+
+
 class DocumentMessages:
     """Messages returned by the document endpoints."""
 

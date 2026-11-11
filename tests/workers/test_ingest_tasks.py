@@ -42,13 +42,16 @@ def test_worker_entry_point_imports_without_a_cycle() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_api_does_not_load_docling() -> None:
-    """Docling costs 3 s and 400 MB; only the worker should import it."""
+def test_api_does_not_load_the_model_libraries() -> None:
+    """Docling, PyTorch and transformers cost 3 s and 400 MB; only the worker pays."""
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import sys, app.application; sys.exit('docling' in sys.modules)",
+            "import sys, app.application; "
+            "loaded = {'docling', 'docling_core', 'torch', 'transformers'}"
+            " & set(sys.modules); "
+            "sys.exit(f'loaded: {sorted(loaded)}' if loaded else 0)",
         ],
         capture_output=True,
         text=True,

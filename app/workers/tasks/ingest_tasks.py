@@ -9,6 +9,7 @@ from celery import signals
 from app.clients.database.client import db_client
 from app.clients.s3.client import s3_client
 from app.clients.s3.service import S3Storage
+from app.helpers.chunking_helper import get_chunker
 from app.helpers.extraction_helper import load_models
 from app.services.ingestion_service import IngestionService
 from app.settings import get_settings
@@ -31,9 +32,10 @@ async def _ingest(document_uuid: UUID) -> None:
 
 
 def _load_models(**_: Any) -> None:
-    """Load Docling's models once per worker process, before its first job."""
+    """Load the models once per worker process, before its first job."""
     load_models()
+    get_chunker(get_settings().EMBEDDING_DENSE_MODEL)
 
 
-# Here, not in celery_app.py: the API imports that file and must not load Docling.
+# Here, not in celery_app.py: the API imports that file and must not load models.
 signals.worker_process_init.connect(_load_models)

@@ -60,7 +60,7 @@ class TaskQueue(StrEnum):
 
 
 class ChunkType(StrEnum):
-    """What a chunk holds. A table is always one whole chunk."""
+    """What a chunk holds: ``TABLE`` when it contains a table or rows of one."""
 
     TEXT = "text"
     TABLE = "table"
