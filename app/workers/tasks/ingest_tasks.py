@@ -10,6 +10,7 @@ from app.clients.database.client import db_client
 from app.clients.s3.client import s3_client
 from app.clients.s3.service import S3Storage
 from app.helpers.chunking_helper import get_chunker
+from app.helpers.embedding_helper import get_dense_embedder, get_sparse_embedder
 from app.helpers.extraction_helper import load_models
 from app.services.ingestion_service import IngestionService
 from app.settings import get_settings
@@ -28,13 +29,17 @@ async def _ingest(document_uuid: UUID) -> None:
     async with worker_clients():
         storage = S3Storage(s3_client.client, get_settings().S3_BUCKET)
         async for session in db_client.get_session():
-            await IngestionService(session, storage).ingest(document_uuid)
+            await IngestionService(
+                session, storage, get_dense_embedder(), get_sparse_embedder()
+            ).ingest(document_uuid)
 
 
 def _load_models(**_: Any) -> None:
     """Load the models once per worker process, before its first job."""
     load_models()
     get_chunker(get_settings().EMBEDDING_DENSE_MODEL)
+    get_dense_embedder()
+    get_sparse_embedder()
 
 
 # Here, not in celery_app.py: the API imports that file and must not load models.

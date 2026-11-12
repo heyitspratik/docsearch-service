@@ -11,6 +11,7 @@ from app.db.models import DocumentMaster
 from app.db.services import CommonDBService
 from app.helpers import ObjectStorage, extracted_key
 from app.helpers.chunking_helper import chunk_document
+from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder
 from app.helpers.extraction_helper import extract
 from app.log import get_logger
 from app.settings import get_settings
@@ -21,13 +22,21 @@ logger = get_logger(__name__)
 class IngestionService:
     """Turns an uploaded document into searchable chunks.
 
-    Extraction and chunking are done; embedding, indexing and status updates
-    follow in steps 2.8 to 2.10.
+    Extraction, chunking and embedding are done; indexing and status updates
+    follow in steps 2.9 and 2.10.
     """
 
-    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        storage: ObjectStorage,
+        dense: DenseEmbedder,
+        sparse: SparseEmbedder,
+    ) -> None:
         self.common_db = CommonDBService(session)
         self.storage = storage
+        self.dense = dense
+        self.sparse = sparse
 
     async def ingest(self, document_uuid: UUID) -> None:
         """Process one document. A missing or deleted document is skipped.
@@ -68,4 +77,12 @@ class IngestionService:
         logger.info(
             f"Chunked document {document_uuid}: {len(chunks)} chunks, "
             f"largest {max((c.token_count for c in chunks), default=0)} tokens"
+        )
+
+        texts = [chunk.embed_text for chunk in chunks]
+        dense_vectors = await asyncio.to_thread(self.dense.embed_passages, texts)
+        sparse_vectors = await asyncio.to_thread(self.sparse.embed_passages, texts)
+        logger.info(
+            f"Embedded document {document_uuid}: {len(dense_vectors)} dense and "
+            f"{len(sparse_vectors)} sparse vectors"
         )

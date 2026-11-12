@@ -12,11 +12,21 @@ from app.db.models import DocumentMaster
 from app.exceptions import ExtractionError
 from app.helpers import extracted_key
 from app.services.ingestion_service import IngestionService
-from tests.fakes import InMemoryStorage
+from tests.fakes import FakeDenseEmbedder, FakeSparseEmbedder, InMemoryStorage
 
 pytestmark = pytest.mark.integration
 
 NOTES = b"# Leave policy\n\nStaff get twenty days.\n"
+
+
+def make_service(
+    session: AsyncSession,
+    storage: InMemoryStorage,
+    dense: FakeDenseEmbedder | None = None,
+) -> IngestionService:
+    return IngestionService(
+        session, storage, dense or FakeDenseEmbedder(), FakeSparseEmbedder()
+    )
 
 
 async def add_document(
@@ -49,9 +59,10 @@ async def test_extracts_saves_the_json_and_chunks(
     document = await add_document(db_session, storage, DocumentStatus.QUEUED)
 
     with caplog.at_level(logging.INFO):
-        await IngestionService(db_session, storage).ingest(document.uuid)
+        await make_service(db_session, storage).ingest(document.uuid)
 
     assert f"Chunked document {document.uuid}: 1 chunks" in caplog.text
+    assert f"Embedded document {document.uuid}: 1 dense and 1 sparse" in caplog.text
 
     data, content_type = storage.objects[extracted_key("user-1", str(document.uuid))]
     assert content_type == "application/json"
@@ -66,7 +77,7 @@ async def test_unreadable_file_raises(db_session: AsyncSession) -> None:
     )
 
     with pytest.raises(ExtractionError):
-        await IngestionService(db_session, storage).ingest(document.uuid)
+        await make_service(db_session, storage).ingest(document.uuid)
 
 
 async def test_missing_document_is_skipped(
@@ -75,7 +86,7 @@ async def test_missing_document_is_skipped(
     missing = uuid4()
 
     with caplog.at_level(logging.INFO):
-        await IngestionService(db_session, InMemoryStorage()).ingest(missing)
+        await make_service(db_session, InMemoryStorage()).ingest(missing)
 
     assert f"Document {missing} not found" in caplog.text
 
@@ -84,6 +95,15 @@ async def test_deleted_document_is_skipped(db_session: AsyncSession) -> None:
     storage = InMemoryStorage()
     document = await add_document(db_session, storage, DocumentStatus.DELETED)
 
-    await IngestionService(db_session, storage).ingest(document.uuid)
+    await make_service(db_session, storage).ingest(document.uuid)
 
     assert extracted_key("user-1", str(document.uuid)) not in storage.objects
+
+
+async def test_embeds_the_heading_with_the_text(db_session: AsyncSession) -> None:
+    storage, dense = InMemoryStorage(), FakeDenseEmbedder()
+    document = await add_document(db_session, storage, DocumentStatus.QUEUED)
+
+    await make_service(db_session, storage, dense).ingest(document.uuid)
+
+    assert dense.calls == [["Leave policy\nStaff get twenty days."]]

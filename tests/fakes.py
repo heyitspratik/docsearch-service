@@ -1,6 +1,9 @@
 """Test stand-ins for the app's interfaces."""
 
+from collections.abc import Sequence
+
 from app.exceptions import NotFoundError
+from app.helpers.embedding_helper import SparseVector
 
 
 class InMemoryStorage:
@@ -19,3 +22,21 @@ class InMemoryStorage:
 
     async def delete(self, key: str) -> None:
         self.objects.pop(key, None)
+
+
+class FakeDenseEmbedder:
+    """``DenseEmbedder`` that returns tiny vectors, so tests load no model."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        return [[float(len(text)), 1.0] for text in texts]
+
+
+class FakeSparseEmbedder:
+    """``SparseEmbedder`` that weighs every text the same."""
+
+    def embed_passages(self, texts: Sequence[str]) -> list[SparseVector]:
+        return [SparseVector(indices=[1], values=[1.0]) for _ in texts]

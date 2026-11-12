@@ -76,9 +76,12 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
         yield session
 
     class FakeIngestionService:
-        def __init__(self, given: object, storage: object) -> None:
+        def __init__(
+            self, given: object, storage: object, dense: object, sparse: object
+        ) -> None:
             assert given is session
             assert storage is not None
+            assert (dense, sparse) == ("dense", "sparse")
 
         async def ingest(self, document_uuid: UUID) -> None:
             events.append(f"ingest {document_uuid}")
@@ -86,6 +89,8 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
     monkeypatch.setattr(ingest_tasks, "worker_clients", fake_clients)
     monkeypatch.setattr(ingest_tasks.db_client, "get_session", fake_get_session)
     monkeypatch.setattr(ingest_tasks, "s3_client", SimpleNamespace(client=object()))
+    monkeypatch.setattr(ingest_tasks, "get_dense_embedder", lambda: "dense")
+    monkeypatch.setattr(ingest_tasks, "get_sparse_embedder", lambda: "sparse")
     monkeypatch.setattr(ingest_tasks, "IngestionService", FakeIngestionService)
     document_uuid = uuid4()
 
