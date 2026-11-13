@@ -8,8 +8,10 @@ from fastapi import FastAPI
 from app.clients.database.client import db_client
 from app.clients.mongo.client import mongo_client
 from app.clients.qdrant.client import qdrant_client
+from app.clients.qdrant.service import QdrantVectorStore
 from app.clients.redis.client import redis_client
 from app.clients.s3.client import s3_client
+from app.helpers.model_spec_helper import get_model_spec
 from app.log import get_logger
 from app.settings import Settings, get_settings
 
@@ -43,6 +45,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.QDRANT_ENABLED:
         await qdrant_client.init_qdrant()
         logger.info("Qdrant connection established")
+        # Refuses to start when the alias points to another model's collection.
+        await QdrantVectorStore(
+            qdrant_client.client, settings.QDRANT_COLLECTION_ALIAS
+        ).ensure_collection(get_model_spec(settings.EMBEDDING_DENSE_MODEL))
     if settings.MONGO_ENABLED:
         await mongo_client.init_mongo()
         logger.info("MongoDB connection established")

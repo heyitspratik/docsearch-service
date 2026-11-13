@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.qdrant.service import QdrantVectorStore
 from app.constants import DocumentStatus
 from app.db.models import DocumentMaster
 from app.db.services import CommonDBService
@@ -13,6 +14,7 @@ from app.helpers import ObjectStorage, extracted_key
 from app.helpers.chunking_helper import chunk_document
 from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder
 from app.helpers.extraction_helper import extract
+from app.helpers.vector_store_helper import ChunkPayload, ChunkPoint, point_id
 from app.log import get_logger
 from app.settings import get_settings
 
@@ -22,8 +24,8 @@ logger = get_logger(__name__)
 class IngestionService:
     """Turns an uploaded document into searchable chunks.
 
-    Extraction, chunking and embedding are done; indexing and status updates
-    follow in steps 2.9 and 2.10.
+    Extraction, chunking, embedding and indexing are done; status updates and
+    saving chunks to Postgres follow in step 2.10.
     """
 
     def __init__(
@@ -32,11 +34,13 @@ class IngestionService:
         storage: ObjectStorage,
         dense: DenseEmbedder,
         sparse: SparseEmbedder,
+        vectors: QdrantVectorStore,
     ) -> None:
         self.common_db = CommonDBService(session)
         self.storage = storage
         self.dense = dense
         self.sparse = sparse
+        self.vectors = vectors
 
     async def ingest(self, document_uuid: UUID) -> None:
         """Process one document. A missing or deleted document is skipped.
@@ -71,9 +75,8 @@ class IngestionService:
             f"{len(extracted.tables)} tables"
         )
 
-        chunks = await asyncio.to_thread(
-            chunk_document, extracted, get_settings().EMBEDDING_DENSE_MODEL
-        )
+        model = get_settings().EMBEDDING_DENSE_MODEL
+        chunks = await asyncio.to_thread(chunk_document, extracted, model)
         logger.info(
             f"Chunked document {document_uuid}: {len(chunks)} chunks, "
             f"largest {max((c.token_count for c in chunks), default=0)} tokens"
@@ -86,3 +89,27 @@ class IngestionService:
             f"Embedded document {document_uuid}: {len(dense_vectors)} dense and "
             f"{len(sparse_vectors)} sparse vectors"
         )
+
+        points = [
+            ChunkPoint(
+                id=point_id(document_uuid, chunk.index),
+                dense=dense_vector,
+                sparse=sparse_vector,
+                payload=ChunkPayload(
+                    user_uuid=document["user_uuid"],
+                    document_id=str(document_uuid),
+                    filename=document["filename"],
+                    chunk_index=chunk.index,
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    chunk_type=chunk.chunk_type,
+                    text=chunk.text,
+                    embedding_model=model,
+                ),
+            )
+            for chunk, dense_vector, sparse_vector in zip(
+                chunks, dense_vectors, sparse_vectors, strict=True
+            )
+        ]
+        await self.vectors.upsert(points)
+        logger.info(f"Indexed document {document_uuid}: {len(points)} points")

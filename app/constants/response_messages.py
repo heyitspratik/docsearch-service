@@ -78,6 +78,10 @@ class QdrantMessages:
     """Messages raised by the qdrant client."""
 
     CLIENT_NOT_INITIALIZED = "Qdrant client not initialized"
+    ALIAS_MODEL_MISMATCH = (
+        "Alias {alias} points to {current}, but {model} needs {expected}. "
+        "Re-index, or set EMBEDDING_DENSE_MODEL back"
+    )
 
 
 class MongoMessages:

@@ -66,6 +66,20 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
     events: list[str] = []
     session = object()
 
+    class FakeStore:
+        def __init__(self, client: object, alias: str) -> None:
+            assert alias == "chunks"
+
+        async def ensure_collection(self, spec: object) -> None:
+            events.append("collection ensured")
+
+    store: Any = None
+
+    def make_store(client: object, alias: str) -> FakeStore:
+        nonlocal store
+        store = FakeStore(client, alias)
+        return store
+
     @asynccontextmanager
     async def fake_clients() -> AsyncGenerator[None, None]:
         events.append("clients open")
@@ -77,11 +91,17 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
 
     class FakeIngestionService:
         def __init__(
-            self, given: object, storage: object, dense: object, sparse: object
+            self,
+            given: object,
+            storage: object,
+            dense: object,
+            sparse: object,
+            vectors: object,
         ) -> None:
             assert given is session
             assert storage is not None
             assert (dense, sparse) == ("dense", "sparse")
+            assert vectors is store
 
         async def ingest(self, document_uuid: UUID) -> None:
             events.append(f"ingest {document_uuid}")
@@ -89,6 +109,8 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
     monkeypatch.setattr(ingest_tasks, "worker_clients", fake_clients)
     monkeypatch.setattr(ingest_tasks.db_client, "get_session", fake_get_session)
     monkeypatch.setattr(ingest_tasks, "s3_client", SimpleNamespace(client=object()))
+    monkeypatch.setattr(ingest_tasks, "qdrant_client", SimpleNamespace(client=object()))
+    monkeypatch.setattr(ingest_tasks, "QdrantVectorStore", make_store)
     monkeypatch.setattr(ingest_tasks, "get_dense_embedder", lambda: "dense")
     monkeypatch.setattr(ingest_tasks, "get_sparse_embedder", lambda: "sparse")
     monkeypatch.setattr(ingest_tasks, "IngestionService", FakeIngestionService)
@@ -96,4 +118,9 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
 
     ingest_tasks.ingest_document(str(document_uuid))
 
-    assert events == ["clients open", f"ingest {document_uuid}", "clients closed"]
+    assert events == [
+        "clients open",
+        "collection ensured",
+        f"ingest {document_uuid}",
+        "clients closed",
+    ]

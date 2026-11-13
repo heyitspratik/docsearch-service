@@ -62,3 +62,14 @@ JWKS_TIMEOUT_SECONDS = 5.0
 MAX_FILENAME_LENGTH = 255
 # Docling reads plain text through its Markdown reader.
 DOCLING_EXTENSIONS = {".txt": ".md"}
+
+# --- Vector store (Qdrant) ---
+DENSE_VECTOR_NAME = "dense"
+SPARSE_VECTOR_NAME = "sparse"
+# Qdrant's defaults: links per graph node, and how widely each insert searches.
+HNSW_M = 16
+HNSW_EF_CONSTRUCT = 100
+#: Payload fields every search filters on, indexed so the filter stays fast.
+PAYLOAD_INDEX_FIELDS = ("user_uuid", "document_id")
+#: Points per upsert request; keeps each request a few MB.
+UPSERT_BATCH_SIZE = 256
