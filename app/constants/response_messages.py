@@ -115,6 +115,13 @@ class ExtractionMessages:
     NO_TEXT = "No text was found in the file"
 
 
+class IngestionMessages:
+    """Why ingestion stopped, other than an unreadable file. Saved in ``error``."""
+
+    FILE_MISSING = "The uploaded file is missing from storage"
+    RETRIES_EXHAUSTED = "Processing failed after {attempts} attempts. Upload it again"
+
+
 class EmbeddingMessages:
     """Problems with the configured embedding model."""
 

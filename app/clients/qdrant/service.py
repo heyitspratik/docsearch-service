@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from http import HTTPStatus
 from itertools import batched
+from uuid import UUID
 
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -33,6 +34,20 @@ class QdrantVectorStore:
     def __init__(self, client: AsyncQdrantClient, alias: str) -> None:
         self.client = client
         self.alias = alias
+
+    @staticmethod
+    def _to_point_struct(point: ChunkPoint) -> models.PointStruct:
+        """A chunk point in the shape the Qdrant client sends."""
+        return models.PointStruct(
+            id=point.id,
+            vector={
+                DENSE_VECTOR_NAME: point.dense,
+                SPARSE_VECTOR_NAME: models.SparseVector(
+                    indices=point.sparse.indices, values=point.sparse.values
+                ),
+            },
+            payload=point.payload.model_dump(mode="json"),
+        )
 
     async def ensure_collection(self, spec: ModelSpec) -> None:
         """Create the model's collection and alias if missing; refuse a mismatch.
@@ -73,10 +88,27 @@ class QdrantVectorStore:
         for batch in batched(points, UPSERT_BATCH_SIZE):
             await self.client.upsert(
                 collection_name=self.alias,
-                points=[_to_point_struct(point) for point in batch],
+                points=[self._to_point_struct(point) for point in batch],
                 # Return only once the points are searchable.
                 wait=True,
             )
+
+    async def delete_document(self, document_uuid: UUID) -> None:
+        """Remove every point of one document. A document with none is fine."""
+        await self.client.delete(
+            collection_name=self.alias,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="document_id",
+                            match=models.MatchValue(value=str(document_uuid)),
+                        )
+                    ]
+                )
+            ),
+            wait=True,
+        )
 
     async def _alias_target(self) -> str | None:
         """The collection the alias points to, or None if there is no alias."""
@@ -118,17 +150,3 @@ class QdrantVectorStore:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
         logger.info(f"Qdrant collection {name} ready ({spec.dimensions} dimensions)")
-
-
-def _to_point_struct(point: ChunkPoint) -> models.PointStruct:
-    """A chunk point in the shape the Qdrant client sends."""
-    return models.PointStruct(
-        id=point.id,
-        vector={
-            DENSE_VECTOR_NAME: point.dense,
-            SPARSE_VECTOR_NAME: models.SparseVector(
-                indices=point.sparse.indices, values=point.sparse.values
-            ),
-        },
-        payload=point.payload.model_dump(mode="json"),
-    )

@@ -63,6 +63,10 @@ MAX_FILENAME_LENGTH = 255
 # Docling reads plain text through its Markdown reader.
 DOCLING_EXTENSIONS = {".txt": ".md"}
 
+# --- Ingestion ---
+#: First retry delay; each retry doubles it (10 s, 20 s, 40 s, 80 s, 160 s).
+INGEST_RETRY_BASE_SECONDS = 10
+
 # --- Vector store (Qdrant) ---
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"

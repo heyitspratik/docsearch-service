@@ -124,3 +124,50 @@ def test_task_opens_clients_and_calls_the_ingestion_service(
         f"ingest {document_uuid}",
         "clients closed",
     ]
+
+
+def test_temporary_error_is_retried_then_marked_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[UUID] = []
+    failed: list[tuple[UUID, str]] = []
+
+    async def always_down(document_uuid: UUID) -> None:
+        attempts.append(document_uuid)
+        raise ConnectionError("qdrant down")
+
+    async def mark_failed(document_uuid: UUID, error: str) -> None:
+        failed.append((document_uuid, error))
+
+    monkeypatch.setattr(ingest_tasks, "_ingest", always_down)
+    monkeypatch.setattr(ingest_tasks, "_mark_failed", mark_failed)
+    document_uuid = uuid4()
+
+    # Run in-process: Celery repeats each retry at once instead of waiting.
+    ingest_tasks.ingest_document.apply(args=[str(document_uuid)])
+
+    assert len(attempts) == 6  # the first try and 5 retries
+    assert failed == [
+        (document_uuid, "Processing failed after 6 attempts. Upload it again")
+    ]
+
+
+def test_success_after_a_retry_is_not_marked_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[UUID] = []
+
+    async def down_once(document_uuid: UUID) -> None:
+        attempts.append(document_uuid)
+        if len(attempts) == 1:
+            raise ConnectionError("qdrant down")
+
+    async def mark_failed(document_uuid: UUID, error: str) -> None:
+        raise AssertionError("must not be called")
+
+    monkeypatch.setattr(ingest_tasks, "_ingest", down_once)
+    monkeypatch.setattr(ingest_tasks, "_mark_failed", mark_failed)
+
+    ingest_tasks.ingest_document.apply(args=[str(uuid4())])
+
+    assert len(attempts) == 2

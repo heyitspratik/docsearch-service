@@ -68,7 +68,12 @@ async def db_session() -> AsyncIterator[AsyncSession]:
             raise
         pytest.skip(f"Postgres not reachable ({e.__class__.__name__}); set DB_*")
     transaction = await connection.begin()
-    session = AsyncSession(bind=connection, join_transaction_mode="create_savepoint")
+    # Commits inside a test end a savepoint; the outer rollback still undoes them.
+    session = AsyncSession(
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+        expire_on_commit=False,
+    )
     try:
         yield session
     finally:

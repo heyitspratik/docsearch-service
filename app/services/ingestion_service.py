@@ -2,16 +2,18 @@
 
 import asyncio
 import json
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.qdrant.service import QdrantVectorStore
-from app.constants import DocumentStatus
-from app.db.models import DocumentMaster
-from app.db.services import CommonDBService
+from app.constants import DocumentStatus, IngestionMessages
+from app.db.models import DocumentChunk, DocumentMaster
+from app.db.services import CommonDBService, DocumentDBService
+from app.exceptions import ExtractionError, NotFoundError
 from app.helpers import ObjectStorage, extracted_key
-from app.helpers.chunking_helper import chunk_document
+from app.helpers.chunking_helper import Chunk, chunk_document
 from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder
 from app.helpers.extraction_helper import extract
 from app.helpers.vector_store_helper import ChunkPayload, ChunkPoint, point_id
@@ -24,8 +26,8 @@ logger = get_logger(__name__)
 class IngestionService:
     """Turns an uploaded document into searchable chunks.
 
-    Extraction, chunking, embedding and indexing are done; status updates and
-    saving chunks to Postgres follow in step 2.10.
+    Status flow: queued → extracting → chunking → embedding → indexing → ready,
+    or failed. Each stage is committed, so the status endpoint shows progress.
     """
 
     def __init__(
@@ -36,17 +38,33 @@ class IngestionService:
         sparse: SparseEmbedder,
         vectors: QdrantVectorStore,
     ) -> None:
+        self.session = session
         self.common_db = CommonDBService(session)
+        self.document_db = DocumentDBService(session)
         self.storage = storage
         self.dense = dense
         self.sparse = sparse
         self.vectors = vectors
 
-    async def ingest(self, document_uuid: UUID) -> None:
-        """Process one document. A missing or deleted document is skipped.
+    @staticmethod
+    def _chunk_row(document_id: int, chunk: Chunk) -> DocumentChunk:
+        """A chunk as its ``document_chunk`` row."""
+        return DocumentChunk(
+            document_id=document_id,
+            chunk_index=chunk.index,
+            content=chunk.text,
+            chunk_type=chunk.chunk_type,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            heading_path=chunk.heading_path,
+            token_count=chunk.token_count,
+        )
 
-        Raises:
-            ExtractionError: The file is corrupt or has no text.
+    async def ingest(self, document_uuid: UUID) -> None:
+        """Process one document. Missing, deleted and ready documents are skipped.
+
+        A corrupt, empty or missing file is marked ``failed``: retrying cannot
+        help. Any other error is raised, so the task retries it.
         """
         document = await self.common_db.get_row_by_key(
             DocumentMaster,
@@ -58,10 +76,35 @@ class IngestionService:
             logger.warning(f"Document {document_uuid} not found; nothing to ingest")
             return
 
-        if DocumentStatus(document["status"]) is DocumentStatus.DELETED:
-            logger.info(f"Document {document_uuid} was deleted; skipping ingest")
+        status = DocumentStatus(document["status"])
+        if status in (DocumentStatus.DELETED, DocumentStatus.READY):
+            logger.info(f"Document {document_uuid} is {status.name}; skipping ingest")
             return
 
+        try:
+            await self._process(document_uuid, document)
+        except (ExtractionError, NotFoundError) as e:
+            # NotFoundError can only come from storage: the original is gone.
+            await self.session.rollback()
+            error = (
+                e.message
+                if isinstance(e, ExtractionError)
+                else IngestionMessages.FILE_MISSING
+            )
+            logger.warning(f"Document {document_uuid} failed: {error}")
+            await self.mark_failed(document_uuid, error)
+
+    async def mark_failed(self, document_uuid: UUID, error: str) -> None:
+        """Set status ``failed`` with the reason, unless it was deleted meanwhile."""
+        await self.document_db.update_document(
+            document_uuid, status=DocumentStatus.FAILED, error=error
+        )
+        await self.session.commit()
+
+    async def _process(self, document_uuid: UUID, document: dict[str, Any]) -> None:
+        """Run the stages, stopping early if the document is deleted meanwhile."""
+        if not await self._set_stage(document_uuid, DocumentStatus.EXTRACTING):
+            return
         data = await self.storage.get(document["storage_key"])
         # Docling blocks for seconds to minutes; a thread keeps the event loop free.
         extracted = await asyncio.to_thread(extract, document["filename"], data)
@@ -75,6 +118,8 @@ class IngestionService:
             f"{len(extracted.tables)} tables"
         )
 
+        if not await self._set_stage(document_uuid, DocumentStatus.CHUNKING):
+            return
         model = get_settings().EMBEDDING_DENSE_MODEL
         chunks = await asyncio.to_thread(chunk_document, extracted, model)
         logger.info(
@@ -82,6 +127,8 @@ class IngestionService:
             f"largest {max((c.token_count for c in chunks), default=0)} tokens"
         )
 
+        if not await self._set_stage(document_uuid, DocumentStatus.EMBEDDING):
+            return
         texts = [chunk.embed_text for chunk in chunks]
         dense_vectors = await asyncio.to_thread(self.dense.embed_passages, texts)
         sparse_vectors = await asyncio.to_thread(self.sparse.embed_passages, texts)
@@ -90,6 +137,8 @@ class IngestionService:
             f"{len(sparse_vectors)} sparse vectors"
         )
 
+        if not await self._set_stage(document_uuid, DocumentStatus.INDEXING):
+            return
         points = [
             ChunkPoint(
                 id=point_id(document_uuid, chunk.index),
@@ -111,5 +160,34 @@ class IngestionService:
                 chunks, dense_vectors, sparse_vectors, strict=True
             )
         ]
+        # An earlier, failed attempt may have left points; start clean.
+        await self.vectors.delete_document(document_uuid)
         await self.vectors.upsert(points)
-        logger.info(f"Indexed document {document_uuid}: {len(points)} points")
+        await self.document_db.replace_chunks(
+            document["id"], [self._chunk_row(document["id"], chunk) for chunk in chunks]
+        )
+        ready = await self.document_db.update_document(
+            document_uuid,
+            status=DocumentStatus.READY,
+            error=None,
+            # TXT and DOCX have no pages.
+            page_count=len(extracted.pages) or None,
+            chunk_count=len(chunks),
+            embedding_model=model,
+        )
+        if not ready:
+            # Deleted while indexing: drop the chunk rows and points just written.
+            await self.session.rollback()
+            await self.vectors.delete_document(document_uuid)
+            logger.info(f"Document {document_uuid} was deleted during ingest")
+            return
+        await self.session.commit()
+        logger.info(f"Document {document_uuid} ready: {len(points)} chunks indexed")
+
+    async def _set_stage(self, document_uuid: UUID, status: DocumentStatus) -> bool:
+        """Commit the new stage so it is visible at once; False if deleted."""
+        updated = await self.document_db.update_document(document_uuid, status=status)
+        await self.session.commit()
+        if not updated:
+            logger.info(f"Document {document_uuid} was deleted; stopping ingest")
+        return updated

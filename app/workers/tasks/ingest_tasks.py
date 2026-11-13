@@ -4,31 +4,53 @@ import asyncio
 from typing import Any
 from uuid import UUID
 
-from celery import signals
+from celery import Task, signals
 
 from app.clients.database.client import db_client
 from app.clients.qdrant.client import qdrant_client
 from app.clients.qdrant.service import QdrantVectorStore
 from app.clients.s3.client import s3_client
 from app.clients.s3.service import S3Storage
+from app.constants import INGEST_RETRY_BASE_SECONDS, IngestionMessages
 from app.helpers.chunking_helper import get_chunker
 from app.helpers.embedding_helper import get_dense_embedder, get_sparse_embedder
 from app.helpers.extraction_helper import load_models
 from app.helpers.model_spec_helper import get_model_spec
+from app.log import get_logger
 from app.services.ingestion_service import IngestionService
 from app.settings import get_settings
 from app.workers.celery_app import celery_app
 from app.workers.worker_clients import worker_clients
 
+logger = get_logger(__name__)
 
-@celery_app.task(name="ingest_document")  # type: ignore[untyped-decorator]
-def ingest_document(document_uuid: str) -> None:
-    """Ingest one document. Synchronous: Celery runs plain functions."""
-    asyncio.run(_ingest(UUID(document_uuid)))
+
+@celery_app.task(  # type: ignore[untyped-decorator]
+    name="ingest_document", bind=True, max_retries=get_settings().CELERY_MAX_RETRIES
+)
+def ingest_document(self: Task, document_uuid: str) -> None:
+    """Ingest one document. Synchronous: Celery runs plain functions.
+
+    A temporary error (e.g. Qdrant down) is retried after 10 s, 20 s, 40 s …;
+    once the retries run out, the document is marked ``failed``.
+    """
+    uuid = UUID(document_uuid)
+    try:
+        asyncio.run(_ingest(uuid))
+    except Exception as e:
+        attempt = self.request.retries + 1
+        if self.request.retries >= self.max_retries:
+            logger.exception(f"Ingest of {uuid} failed after {attempt} attempts")
+            error = IngestionMessages.RETRIES_EXHAUSTED.format(attempts=attempt)
+            asyncio.run(_mark_failed(uuid, error))
+            return
+        delay = INGEST_RETRY_BASE_SECONDS * 2**self.request.retries
+        logger.warning(f"Ingest of {uuid} failed on attempt {attempt}: {e!r}")
+        raise self.retry(exc=e, countdown=delay) from e
 
 
 async def _ingest(document_uuid: UUID) -> None:
-    """Open the clients, run the service in one transaction, close them."""
+    """Open the clients, run the service, close them."""
     settings = get_settings()
     async with worker_clients():
         storage = S3Storage(s3_client.client, settings.S3_BUCKET)
@@ -41,6 +63,20 @@ async def _ingest(document_uuid: UUID) -> None:
             await IngestionService(
                 session, storage, get_dense_embedder(), get_sparse_embedder(), vectors
             ).ingest(document_uuid)
+
+
+async def _mark_failed(document_uuid: UUID, error: str) -> None:
+    """Record the final failure. Skips the collection check, which may be why."""
+    settings = get_settings()
+    async with worker_clients():
+        storage = S3Storage(s3_client.client, settings.S3_BUCKET)
+        vectors = QdrantVectorStore(
+            qdrant_client.client, settings.QDRANT_COLLECTION_ALIAS
+        )
+        async for session in db_client.get_session():
+            await IngestionService(
+                session, storage, get_dense_embedder(), get_sparse_embedder(), vectors
+            ).mark_failed(document_uuid, error)
 
 
 def _load_models(**_: Any) -> None:
