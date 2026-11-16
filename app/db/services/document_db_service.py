@@ -1,9 +1,10 @@
 """Queries on document_master and document_chunk."""
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DocumentStatus
@@ -41,6 +42,31 @@ class DocumentDBService:
         self.session.add(document)
         await self.session.flush()
         return document
+
+    async def list_documents(self, user_uuid: str) -> Sequence[DocumentMaster]:
+        """A user's documents, newest first. Deleted ones are left out."""
+        result = await self.session.execute(
+            select(DocumentMaster)
+            .where(
+                DocumentMaster.user_uuid == user_uuid,
+                DocumentMaster.status != DocumentStatus.DELETED,
+            )
+            .order_by(DocumentMaster.created_at.desc(), DocumentMaster.id.desc())
+        )
+        return result.scalars().all()
+
+    async def get_document(
+        self, user_uuid: str, document_uuid: UUID
+    ) -> DocumentMaster | None:
+        """One document, only if this user owns it and it is not deleted."""
+        result = await self.session.execute(
+            select(DocumentMaster).where(
+                DocumentMaster.uuid == document_uuid,
+                DocumentMaster.user_uuid == user_uuid,
+                DocumentMaster.status != DocumentStatus.DELETED,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def update_document(self, document_uuid: UUID, **values: Any) -> bool:
         """Set columns on a document, unless it was deleted meanwhile.

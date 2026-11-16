@@ -132,3 +132,7 @@ class DocumentMessages:
     """Messages returned by the document endpoints."""
 
     UPLOAD_ACCEPTED = "Upload received; accepted files are queued for processing"
+    LIST_FETCHED = "Documents fetched"
+    METADATA_FETCHED = "Document details fetched"
+    STATUS_FETCHED = "Document status fetched"
+    NOT_FOUND = "Document not found"

@@ -10,7 +10,13 @@ from app.schemas.response.common_response import (
     ErrorInfo,
     ErrorResponse,
 )
-from app.schemas.response.document_response import UploadedFileResult
+from app.schemas.response.document_response import (
+    DocumentListResponse,
+    DocumentMetadataResponse,
+    DocumentStatusResponse,
+    DocumentSummaryResponse,
+    UploadedFileResponse,
+)
 from app.schemas.response.health_response import (
     ComponentHealth,
     DetailedHealthResponse,
@@ -23,11 +29,15 @@ __all__ = [
     "BaseResponse",
     "ComponentHealth",
     "DetailedHealthResponse",
+    "DocumentListResponse",
+    "DocumentMetadataResponse",
+    "DocumentStatusResponse",
+    "DocumentSummaryResponse",
     "ErrorDetail",
     "ErrorInfo",
     "ErrorResponse",
     "HealthResponse",
-    "UploadedFileResult",
+    "UploadedFileResponse",
     "UserResponse",
     "VersionResponse",
 ]
