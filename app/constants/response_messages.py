@@ -135,4 +135,5 @@ class DocumentMessages:
     LIST_FETCHED = "Documents fetched"
     METADATA_FETCHED = "Document details fetched"
     STATUS_FETCHED = "Document status fetched"
+    DELETE_ACCEPTED = "Document deleted; its files and search data are being removed"
     NOT_FOUND = "Document not found"

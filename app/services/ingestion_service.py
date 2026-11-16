@@ -108,8 +108,9 @@ class IngestionService:
         data = await self.storage.get(document["storage_key"])
         # Docling blocks for seconds to minutes; a thread keeps the event loop free.
         extracted = await asyncio.to_thread(extract, document["filename"], data)
+        json_key = extracted_key(document["user_uuid"], str(document_uuid))
         await self.storage.put(
-            extracted_key(document["user_uuid"], str(document_uuid)),
+            json_key,
             json.dumps(extracted.export_to_dict()).encode(),
             "application/json",
         )
@@ -119,6 +120,8 @@ class IngestionService:
         )
 
         if not await self._set_stage(document_uuid, DocumentStatus.CHUNKING):
+            # Deleted while extracting: the purge may have run before this save.
+            await self.storage.delete(json_key)
             return
         model = get_settings().EMBEDDING_DENSE_MODEL
         chunks = await asyncio.to_thread(chunk_document, extracted, model)

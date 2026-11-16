@@ -88,8 +88,12 @@ class DocumentDBService:
         self, document_id: int, chunks: list[DocumentChunk]
     ) -> None:
         """Delete a document's chunk rows and insert ``chunks`` in their place."""
+        await self.delete_chunks(document_id)
+        self.session.add_all(chunks)
+        await self.session.flush()
+
+    async def delete_chunks(self, document_id: int) -> None:
+        """Delete every chunk row of a document. None at all is fine."""
         await self.session.execute(
             delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         )
-        self.session.add_all(chunks)
-        await self.session.flush()

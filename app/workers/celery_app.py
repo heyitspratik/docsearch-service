@@ -18,7 +18,7 @@ settings = get_settings()
 celery_app = Celery(
     "docsearch",
     broker=settings.celery_broker_url,
-    include=["app.workers.tasks.ingest_tasks"],
+    include=["app.workers.tasks.ingest_tasks", "app.workers.tasks.purge_tasks"],
 )
 celery_app.conf.update(
     # Each queue needs its own routing key, or a job is copied into both.
@@ -27,7 +27,10 @@ celery_app.conf.update(
         Queue(TaskQueue.DEFAULT, routing_key=TaskQueue.DEFAULT),
     ],
     task_default_queue=TaskQueue.DEFAULT,
-    task_routes={"ingest_document": {"queue": TaskQueue.INGEST}},
+    task_routes={
+        "ingest_document": {"queue": TaskQueue.INGEST},
+        "purge_document": {"queue": TaskQueue.DEFAULT},
+    },
     # Remove a job from Redis only after it finishes, so a crash cannot lose it.
     task_acks_late=True,
     task_reject_on_worker_lost=True,

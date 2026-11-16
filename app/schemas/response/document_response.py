@@ -52,6 +52,13 @@ class DocumentListResponse(BaseModel):
     documents: list[DocumentSummaryResponse]
 
 
+class DocumentDeleteResponse(BaseModel):
+    """A deleted document (DELETE /documents/{document_uuid})."""
+
+    document_uuid: UUID
+    status: DocumentStatus = Field(description="Always 8 (deleted)")
+
+
 class DocumentMetadataResponse(DocumentSummaryResponse):
     """One document's details."""
 

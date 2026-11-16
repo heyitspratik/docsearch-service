@@ -1,4 +1,4 @@
-"""Document controller: upload, list, metadata and status (delete later)."""
+"""Document controller: upload, list, metadata, status and delete."""
 
 from typing import Annotated
 from uuid import UUID
@@ -12,6 +12,7 @@ from app.constants import DocumentMessages
 from app.helpers import CurrentUser
 from app.schemas.response import (
     BaseResponse,
+    DocumentDeleteResponse,
     DocumentListResponse,
     DocumentMetadataResponse,
     DocumentStatusResponse,
@@ -133,4 +134,37 @@ class DocumentController:
             message=DocumentMessages.STATUS_FETCHED,
             payload=result,
             status=status.HTTP_200_OK,
+        )
+
+    @document_router.delete(
+        "/{document_uuid}",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=BaseResponse[DocumentDeleteResponse],
+        responses={
+            status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+            status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        },
+    )
+    async def delete_document(
+        self,
+        document_uuid: UUID,
+        user: CurrentUser,
+        session: DBSession,
+        background_tasks: BackgroundTasks,
+    ) -> BaseResponse[DocumentDeleteResponse]:
+        """Delete a document.
+
+        Returns 202: it is gone from every endpoint at once; its files and
+        search data are removed in the background.
+
+        Returns:
+            BaseResponse[DocumentDeleteResponse]: The document, now ``deleted``.
+        """
+        result = await DocumentService(session).delete_document(
+            user, document_uuid, background_tasks
+        )
+        return BaseResponse(
+            message=DocumentMessages.DELETE_ACCEPTED,
+            payload=result,
+            status=status.HTTP_202_ACCEPTED,
         )

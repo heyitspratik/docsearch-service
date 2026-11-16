@@ -11,6 +11,7 @@ from app.schemas.response.common_response import (
     ErrorResponse,
 )
 from app.schemas.response.document_response import (
+    DocumentDeleteResponse,
     DocumentListResponse,
     DocumentMetadataResponse,
     DocumentStatusResponse,
@@ -29,6 +30,7 @@ __all__ = [
     "BaseResponse",
     "ComponentHealth",
     "DetailedHealthResponse",
+    "DocumentDeleteResponse",
     "DocumentListResponse",
     "DocumentMetadataResponse",
     "DocumentStatusResponse",

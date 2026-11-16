@@ -1,4 +1,4 @@
-"""Business logic for documents: upload, list, metadata and status (delete later)."""
+"""Business logic for documents: upload, list, metadata, status and delete."""
 
 from collections.abc import Sequence
 from uuid import UUID, uuid4
@@ -6,19 +6,23 @@ from uuid import UUID, uuid4
 from fastapi import BackgroundTasks, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.qdrant.service import QdrantVectorStore
 from app.constants import DocumentMessages, DocumentStatus, UploadMessages
 from app.db.models import DocumentMaster
-from app.db.services import DocumentDBService
+from app.db.services import CommonDBService, DocumentDBService
 from app.exceptions import BadRequestError, FileValidationError, NotFoundError
 from app.helpers import (
     AuthenticatedUser,
     ObjectStorage,
     clean_filename,
+    extracted_key,
     file_extension,
     original_key,
     validate_file,
 )
+from app.log import get_logger
 from app.schemas.response import (
+    DocumentDeleteResponse,
     DocumentListResponse,
     DocumentMetadataResponse,
     DocumentStatusResponse,
@@ -27,13 +31,16 @@ from app.schemas.response import (
     UploadedFileResponse,
 )
 from app.settings import get_settings
-from app.workers.dispatch import enqueue_ingestion
+from app.workers.dispatch import enqueue_ingestion, enqueue_purge
+
+logger = get_logger(__name__)
 
 
 class DocumentService:
-    """Everything the API does with documents."""
+    """Everything the API does with documents, and the worker's purge."""
 
     def __init__(self, session: AsyncSession) -> None:
+        self.common_db = CommonDBService(session)
         self.document_db = DocumentDBService(session)
 
     async def upload(
@@ -131,6 +138,56 @@ class DocumentService:
             error=document.error,
             updated_at=document.updated_at,
         )
+
+    async def delete_document(
+        self,
+        user: AuthenticatedUser,
+        document_uuid: UUID,
+        background_tasks: BackgroundTasks,
+    ) -> DocumentDeleteResponse:
+        """Mark the document ``deleted`` and queue the removal of its data.
+
+        Raises:
+            NotFoundError: No such document for this user, or it was deleted.
+        """
+        document = await self._get_own_document(user, document_uuid)
+        await self.document_db.update_document(
+            document.uuid, status=DocumentStatus.DELETED
+        )
+        # Runs after the commit, so the worker sees the row as deleted.
+        background_tasks.add_task(enqueue_purge, document.uuid)
+        return DocumentDeleteResponse(
+            document_uuid=document.uuid, status=DocumentStatus.DELETED
+        )
+
+    async def purge_document(
+        self,
+        document_uuid: UUID,
+        storage: ObjectStorage,
+        vectors: QdrantVectorStore,
+    ) -> None:
+        """Remove a deleted document's points, files and chunk rows; keep its row.
+
+        Safe to run twice. A document that is not ``deleted`` is left alone.
+        """
+        document = await self.common_db.get_row_by_key(
+            DocumentMaster,
+            "uuid",
+            document_uuid,
+            ["id", "user_uuid", "storage_key", "status"],
+        )
+        if document is None:
+            logger.warning(f"Document {document_uuid} not found; nothing to purge")
+            return
+        if document["status"] != DocumentStatus.DELETED:
+            logger.warning(f"Document {document_uuid} is not deleted; not purging")
+            return
+
+        await vectors.delete_document(document_uuid)
+        await storage.delete(document["storage_key"])
+        await storage.delete(extracted_key(document["user_uuid"], str(document_uuid)))
+        await self.document_db.delete_chunks(document["id"])
+        logger.info(f"Document {document_uuid} purged: points, files and chunks")
 
     async def _get_own_document(
         self, user: AuthenticatedUser, document_uuid: UUID

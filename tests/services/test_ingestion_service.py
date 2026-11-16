@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.qdrant.service import QdrantVectorStore
 from app.constants import DocumentStatus, ExtractionMessages, IngestionMessages
 from app.db.models import DocumentChunk, DocumentMaster
-from app.helpers import ModelSpec, extracted_key
-from app.helpers.vector_store_helper import point_id
+from app.helpers import extracted_key
+from app.helpers.vector_store_helper import ChunkPoint, point_id
 from app.services.ingestion_service import IngestionService
 from tests.fakes import FakeDenseEmbedder, FakeSparseEmbedder, InMemoryStorage
 
@@ -26,24 +26,6 @@ pytestmark = [
 ]
 
 NOTES = b"# Leave policy\n\nStaff get twenty days.\n"
-
-
-# Two dimensions, to match FakeDenseEmbedder's [len(text), 1.0].
-TINY = ModelSpec(name="test/tiny", dimensions=2, max_tokens=512)
-
-
-@pytest.fixture
-async def qdrant() -> AsyncIterator[AsyncQdrantClient]:
-    client = AsyncQdrantClient(location=":memory:")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def vectors(qdrant: AsyncQdrantClient) -> QdrantVectorStore:
-    store = QdrantVectorStore(qdrant, "chunks")
-    await store.ensure_collection(TINY)
-    return store
 
 
 def make_service(
@@ -285,6 +267,60 @@ async def test_deleted_during_ingest_stops_before_indexing(
         return await update(document_uuid, **values)
 
     monkeypatch.setattr(service.document_db, "update_document", delete_before_indexing)
+
+    await service.ingest(document.uuid)
+
+    await db_session.refresh(document)
+    assert document.status == DocumentStatus.DELETED
+    assert (await qdrant.count("chunks")).count == 0
+    assert await chunk_rows(db_session, document) == []
+
+
+async def test_deleted_during_extraction_leaves_no_extracted_file(
+    db_session: AsyncSession,
+    vectors: QdrantVectorStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = InMemoryStorage()
+    document = await add_document(db_session, storage, DocumentStatus.QUEUED)
+    service = make_service(db_session, storage, vectors)
+    update = service.document_db.update_document
+
+    # As if the purge ran while Docling worked, before extracted.json was saved.
+    async def delete_before_chunking(document_uuid: UUID, **values: Any) -> bool:
+        if values.get("status") is DocumentStatus.CHUNKING:
+            await update(document_uuid, status=DocumentStatus.DELETED)
+        return await update(document_uuid, **values)
+
+    monkeypatch.setattr(service.document_db, "update_document", delete_before_chunking)
+
+    await service.ingest(document.uuid)
+
+    assert extracted_key("user-1", str(document.uuid)) not in storage.objects
+
+
+async def test_deleted_after_upsert_removes_the_points_and_rows(
+    db_session: AsyncSession,
+    vectors: QdrantVectorStore,
+    qdrant: AsyncQdrantClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = InMemoryStorage()
+    document = await add_document(db_session, storage, DocumentStatus.QUEUED)
+    service = make_service(db_session, storage, vectors)
+    upsert = vectors.upsert
+
+    # The user deletes right after the upsert; the purge found no points yet.
+    async def upsert_then_delete(points: Sequence[ChunkPoint]) -> None:
+        await upsert(points)
+        assert (await qdrant.count("chunks")).count == 1
+        await service.document_db.update_document(
+            document.uuid, status=DocumentStatus.DELETED
+        )
+        # The API commits its delete in its own transaction.
+        await db_session.commit()
+
+    monkeypatch.setattr(vectors, "upsert", upsert_then_delete)
 
     await service.ingest(document.uuid)
 
