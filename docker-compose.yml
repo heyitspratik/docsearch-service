@@ -91,6 +91,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  beat:
+    build: *app-build
+    image: docsearch-app:local
+    command:
+      - watchfiles
+      - --filter
+      - python
+      - celery -A app.workers.celery_app beat --schedule /tmp/celerybeat-schedule --loglevel INFO
+      - /app/app
+    environment: *app-env
+    volumes:
+      - ./app:/app/app:ro
+    healthcheck:
+      disable: true
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   # One-shot: applies migrations, then exits. The api starts only after it
   # succeeds, so it never runs against an outdated schema.
   migrate:

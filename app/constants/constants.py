@@ -71,6 +71,8 @@ INGEST_RETRY_BASE_SECONDS = 10
 INGEST_LOCK_SECONDS = 50 * 60
 #: A message that finds the lock taken runs again this long after it expires.
 INGEST_RECHECK_MARGIN_SECONDS = 5
+#: How often beat looks for documents stuck in ``queued``.
+REQUEUE_CHECK_SECONDS = 5 * 60
 
 # --- Vector store (Qdrant) ---
 DENSE_VECTOR_NAME = "dense"

@@ -1,10 +1,11 @@
 """Queries on document_master and document_chunk."""
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DocumentStatus
@@ -67,6 +68,21 @@ class DocumentDBService:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_stuck_queued(self, minutes: int) -> list[UUID]:
+        """Documents still ``queued`` ``minutes`` after their last update, oldest first.
+
+        Compared with the database clock, so worker and database clocks may differ.
+        """
+        result = await self.session.execute(
+            select(DocumentMaster.uuid)
+            .where(
+                DocumentMaster.status == DocumentStatus.QUEUED,
+                DocumentMaster.updated_at < func.now() - timedelta(minutes=minutes),
+            )
+            .order_by(DocumentMaster.updated_at)
+        )
+        return list(result.scalars())
 
     async def update_document(self, document_uuid: UUID, **values: Any) -> bool:
         """Set columns on a document, unless it was deleted meanwhile.

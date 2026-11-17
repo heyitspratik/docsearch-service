@@ -189,6 +189,18 @@ class DocumentService:
         await self.document_db.delete_chunks(document["id"])
         logger.info(f"Document {document_uuid} purged: points, files and chunks")
 
+    async def requeue_stuck_documents(self, minutes: int) -> list[UUID]:
+        """Send ingestion jobs again for documents ``queued`` longer than ``minutes``.
+
+        Their first job most likely never reached Redis. Sending one twice is
+        safe: a duplicate waits for the lock or finds the document ``ready``.
+        """
+        stuck = await self.document_db.list_stuck_queued(minutes)
+        if stuck:
+            enqueue_ingestion(stuck)
+            logger.info(f"Re-queued {len(stuck)} documents stuck in queued")
+        return stuck
+
     async def _get_own_document(
         self, user: AuthenticatedUser, document_uuid: UUID
     ) -> DocumentMaster:

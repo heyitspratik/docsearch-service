@@ -1,7 +1,9 @@
-"""The Celery app shared by the worker and by the API, which sends it jobs.
+"""The Celery app shared by the worker, beat and the API, which sends it jobs.
 
 Run a worker with:
     celery -A app.workers.celery_app worker -Q ingest,default
+Run the scheduler (exactly one) with:
+    celery -A app.workers.celery_app beat
 """
 
 from typing import Any
@@ -9,7 +11,7 @@ from typing import Any
 from celery import Celery, signals
 from kombu import Queue
 
-from app.constants import TaskQueue
+from app.constants import REQUEUE_CHECK_SECONDS, TaskQueue
 from app.log import configure_logging
 from app.settings import get_settings
 
@@ -18,7 +20,11 @@ settings = get_settings()
 celery_app = Celery(
     "docsearch",
     broker=settings.celery_broker_url,
-    include=["app.workers.tasks.ingest_tasks", "app.workers.tasks.purge_tasks"],
+    include=[
+        "app.workers.tasks.ingest_tasks",
+        "app.workers.tasks.purge_tasks",
+        "app.workers.tasks.requeue_tasks",
+    ],
 )
 celery_app.conf.update(
     # Each queue needs its own routing key, or a job is copied into both.
@@ -30,6 +36,15 @@ celery_app.conf.update(
     task_routes={
         "ingest_document": {"queue": TaskQueue.INGEST},
         "purge_document": {"queue": TaskQueue.DEFAULT},
+        "requeue_stuck_documents": {"queue": TaskQueue.DEFAULT},
+    },
+    beat_schedule={
+        "requeue-stuck-documents": {
+            "task": "requeue_stuck_documents",
+            "schedule": REQUEUE_CHECK_SECONDS,
+            # A tick nobody ran before the next one is dropped, not piled up.
+            "options": {"expires": REQUEUE_CHECK_SECONDS},
+        },
     },
     # Remove a job from Redis only after it finishes, so a crash cannot lose it.
     task_acks_late=True,
