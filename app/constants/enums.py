@@ -66,6 +66,14 @@ class ChunkType(StrEnum):
     TABLE = "table"
 
 
+class SearchType(StrEnum):
+    """How chunks are found: by words, by meaning, or both fused."""
+
+    KEYWORD = "keyword"
+    SEMANTIC = "semantic"
+    HYBRID = "hybrid"
+
+
 class ErrorCode(StrEnum):
     """Stable codes clients branch on, returned in every error response."""
 

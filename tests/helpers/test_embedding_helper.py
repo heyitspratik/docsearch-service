@@ -63,3 +63,24 @@ def test_dense_adds_the_passage_prefix_and_returns_lists(
 
     assert StubTextEmbedding.received == ["passage: Staff get twenty days."]
     assert vectors == [[1.0, 1.0, 1.0]]
+
+
+def test_bm25_query_weighs_each_word_once(bm25: FastEmbedSparse) -> None:
+    query = bm25.embed_query("tantalum tantalum sheets")
+
+    assert len(query.indices) == 2
+    assert query.values == [1.0, 1.0]
+
+
+def test_dense_adds_the_query_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(embedding_helper, "TextEmbedding", StubTextEmbedding)
+    spec = ModelSpec(
+        name="test/model", dimensions=3, max_tokens=512, query_prefix="query: "
+    )
+
+    vector = FastEmbedDense(spec, cache_dir=None, batch_size=4).embed_query(
+        "How many days?"
+    )
+
+    assert StubTextEmbedding.received == ["query: How many days?"]
+    assert vector == [1.0, 1.0, 1.0]

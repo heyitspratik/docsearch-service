@@ -27,12 +27,20 @@ class DenseEmbedder(Protocol):
         """One vector per text, in the same order."""
         ...
 
+    def embed_query(self, text: str) -> list[float]:
+        """One vector for a search question."""
+        ...
+
 
 class SparseEmbedder(Protocol):
     """Turns passages into keyword weights. fastembed in the app, a fake in tests."""
 
     def embed_passages(self, texts: Sequence[str]) -> list[SparseVector]:
         """One sparse vector per text, in the same order."""
+        ...
+
+    def embed_query(self, text: str) -> SparseVector:
+        """Keyword weights for a search question."""
         ...
 
 
@@ -50,6 +58,13 @@ class FastEmbedDense:
         documents = [self.spec.passage_prefix + text for text in texts]
         vectors = self._model.embed(documents, batch_size=self.batch_size)
         return [vector.tolist() for vector in vectors]
+
+    def embed_query(self, text: str) -> list[float]:
+        """One vector for a question, with the spec's query prefix added first."""
+        vector = next(
+            iter(self._model.embed([self.spec.query_prefix + text], batch_size=1))
+        )
+        return list(vector.tolist())
 
 
 class FastEmbedSparse:
@@ -70,6 +85,13 @@ class FastEmbedSparse:
             SparseVector(indices=vector.indices.tolist(), values=vector.values.tolist())
             for vector in vectors
         ]
+
+    def embed_query(self, text: str) -> SparseVector:
+        """Each query word weighs 1; Qdrant's IDF modifier adds the rarity."""
+        vector = next(iter(self._model.query_embed(text)))
+        return SparseVector(
+            indices=vector.indices.tolist(), values=vector.values.tolist()
+        )
 
 
 @cache

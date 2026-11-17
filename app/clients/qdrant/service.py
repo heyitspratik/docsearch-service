@@ -17,8 +17,14 @@ from app.constants import (
     UPSERT_BATCH_SIZE,
     QdrantMessages,
 )
+from app.helpers.embedding_helper import SparseVector
 from app.helpers.model_spec_helper import ModelSpec
-from app.helpers.vector_store_helper import ChunkPoint, collection_name
+from app.helpers.vector_store_helper import (
+    ChunkPayload,
+    ChunkPoint,
+    SearchHit,
+    collection_name,
+)
 from app.log import get_logger
 
 logger = get_logger(__name__)
@@ -109,6 +115,100 @@ class QdrantVectorStore:
             ),
             wait=True,
         )
+
+    @staticmethod
+    def owner_filter(
+        user_uuid: str, document_ids: Sequence[UUID] | None = None
+    ) -> models.Filter:
+        """Only the user's chunks; ``document_ids`` can narrow that, never widen it."""
+        must: list[models.Condition] = [
+            models.FieldCondition(
+                key="user_uuid", match=models.MatchValue(value=user_uuid)
+            )
+        ]
+        if document_ids:
+            must.append(
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=[str(d) for d in document_ids]),
+                )
+            )
+        return models.Filter(must=must)
+
+    async def search_sparse(
+        self, vector: SparseVector, query_filter: models.Filter, limit: int
+    ) -> list[SearchHit]:
+        """Keyword search: BM25 weights, scored with Qdrant's IDF."""
+        response = await self.client.query_points(
+            collection_name=self.alias,
+            query=models.SparseVector(indices=vector.indices, values=vector.values),
+            using=SPARSE_VECTOR_NAME,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return self._to_hits(response.points)
+
+    async def search_dense(
+        self, vector: list[float], query_filter: models.Filter, limit: int
+    ) -> list[SearchHit]:
+        """Semantic search: nearest meaning vectors (cosine) through HNSW."""
+        response = await self.client.query_points(
+            collection_name=self.alias,
+            query=vector,
+            using=DENSE_VECTOR_NAME,
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return self._to_hits(response.points)
+
+    async def search_hybrid(
+        self,
+        dense: list[float],
+        sparse: SparseVector,
+        query_filter: models.Filter,
+        prefetch_limit: int,
+        limit: int,
+    ) -> list[SearchHit]:
+        """Both searches in one call, merged by rank with RRF."""
+        response = await self.client.query_points(
+            collection_name=self.alias,
+            prefetch=[
+                # Filter each prefetch too: no other user's chunk can be a candidate.
+                models.Prefetch(
+                    query=dense,
+                    using=DENSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=prefetch_limit,
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(
+                        indices=sparse.indices, values=sparse.values
+                    ),
+                    using=SPARSE_VECTOR_NAME,
+                    filter=query_filter,
+                    limit=prefetch_limit,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            query_filter=query_filter,
+            limit=limit,
+            with_payload=True,
+        )
+        return self._to_hits(response.points)
+
+    @staticmethod
+    def _to_hits(points: Sequence[models.ScoredPoint]) -> list[SearchHit]:
+        """Qdrant's scored points as hits, best first."""
+        return [
+            SearchHit(
+                id=str(point.id),
+                score=point.score,
+                payload=ChunkPayload.model_validate(point.payload),
+            )
+            for point in points
+        ]
 
     async def _alias_target(self) -> str | None:
         """The collection the alias points to, or None if there is no alias."""

@@ -34,9 +34,15 @@ class FakeDenseEmbedder:
         self.calls.append(list(texts))
         return [[float(len(text)), 1.0] for text in texts]
 
+    def embed_query(self, text: str) -> list[float]:
+        return [float(len(text)), 1.0]
+
 
 class FakeSparseEmbedder:
     """``SparseEmbedder`` that weighs every text the same."""
 
     def embed_passages(self, texts: Sequence[str]) -> list[SparseVector]:
         return [SparseVector(indices=[1], values=[1.0]) for _ in texts]
+
+    def embed_query(self, text: str) -> SparseVector:
+        return SparseVector(indices=[1], values=[1.0])

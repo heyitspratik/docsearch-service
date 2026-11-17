@@ -47,3 +47,13 @@ class ChunkPoint(BaseModel):
     dense: list[float]
     sparse: SparseVector
     payload: ChunkPayload
+
+
+class SearchHit(BaseModel):
+    """One chunk a search found, with its score from that search."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    score: float
+    payload: ChunkPayload
