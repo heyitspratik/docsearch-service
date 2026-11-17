@@ -11,7 +11,11 @@ from app.clients.qdrant.client import qdrant_client
 from app.clients.qdrant.service import QdrantVectorStore
 from app.clients.s3.client import s3_client
 from app.clients.s3.service import S3Storage
-from app.constants import INGEST_RETRY_BASE_SECONDS, IngestionMessages
+from app.constants import (
+    INGEST_RECHECK_MARGIN_SECONDS,
+    INGEST_RETRY_BASE_SECONDS,
+    IngestionMessages,
+)
 from app.helpers.chunking_helper import get_chunker
 from app.helpers.embedding_helper import get_dense_embedder, get_sparse_embedder
 from app.helpers.extraction_helper import load_models
@@ -20,6 +24,7 @@ from app.log import get_logger
 from app.services.ingestion_service import IngestionService
 from app.settings import get_settings
 from app.workers.celery_app import celery_app
+from app.workers.ingest_lock import IngestLock
 from app.workers.worker_clients import worker_clients
 
 logger = get_logger(__name__)
@@ -31,10 +36,21 @@ logger = get_logger(__name__)
 def ingest_document(self: Task, document_uuid: str) -> None:
     """Ingest one document. Synchronous: Celery runs plain functions.
 
+    Only one run per document at a time. A message that finds the lock taken
+    sends itself again for just after the lock expires: by then the other run
+    has finished (the document is ``ready`` and skipped) or has died (its lock
+    is gone and this run takes over).
     A temporary error (e.g. Qdrant down) is retried after 10 s, 20 s, 40 s …;
     once the retries run out, the document is marked ``failed``.
     """
     uuid = UUID(document_uuid)
+    lock = IngestLock(uuid)
+    if not lock.acquire():
+        wait = lock.seconds_left() + INGEST_RECHECK_MARGIN_SECONDS
+        logger.info(f"Document {uuid} is being ingested; checking again in {wait} s")
+        # A new message, sent before this one is acked, so the job is never lost.
+        self.apply_async(args=[document_uuid], countdown=wait)
+        return
     try:
         asyncio.run(_ingest(uuid))
     except Exception as e:
@@ -46,7 +62,13 @@ def ingest_document(self: Task, document_uuid: str) -> None:
             return
         delay = INGEST_RETRY_BASE_SECONDS * 2**self.request.retries
         logger.warning(f"Ingest of {uuid} failed on attempt {attempt}: {e!r}")
-        raise self.retry(exc=e, countdown=delay) from e
+        failure = e
+    else:
+        return
+    finally:
+        lock.release()
+    # After the release, so the retry can take the lock again.
+    raise self.retry(exc=failure, countdown=delay) from failure
 
 
 async def _ingest(document_uuid: UUID) -> None:

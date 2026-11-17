@@ -1,5 +1,6 @@
 """The ingest task and how upload hands documents to it."""
 
+import logging
 import subprocess
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -12,6 +13,34 @@ import pytest
 
 from app.workers import dispatch
 from app.workers.tasks import ingest_tasks
+
+
+class FakeLock:
+    """A non-blocking lock kept in a set, so tests need no Redis."""
+
+    def __init__(self, held: set[UUID], document_uuid: UUID) -> None:
+        self.held = held
+        self.document_uuid = document_uuid
+
+    def acquire(self) -> bool:
+        if self.document_uuid in self.held:
+            return False
+        self.held.add(self.document_uuid)
+        return True
+
+    def release(self) -> None:
+        self.held.remove(self.document_uuid)
+
+    def seconds_left(self) -> int:
+        return 2699
+
+
+@pytest.fixture(autouse=True)
+def held(monkeypatch: pytest.MonkeyPatch) -> set[UUID]:
+    """Documents whose ingest lock is taken."""
+    taken: set[UUID] = set()
+    monkeypatch.setattr(ingest_tasks, "IngestLock", lambda uuid: FakeLock(taken, uuid))
+    return taken
 
 
 def test_enqueue_sends_one_job_per_document(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,3 +200,66 @@ def test_success_after_a_retry_is_not_marked_failed(
     ingest_tasks.ingest_document.apply(args=[str(uuid4())])
 
     assert len(attempts) == 2
+
+
+def test_a_held_lock_sends_the_job_again_for_after_it_expires(
+    monkeypatch: pytest.MonkeyPatch,
+    held: set[UUID],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sent: list[tuple[list[str], int]] = []
+
+    async def must_not_run(document_uuid: UUID) -> None:
+        raise AssertionError("must not run")
+
+    def apply_async(args: list[str], countdown: int) -> None:
+        sent.append((args, countdown))
+
+    monkeypatch.setattr(ingest_tasks, "_ingest", must_not_run)
+    monkeypatch.setattr(ingest_tasks.ingest_document, "apply_async", apply_async)
+    document_uuid = uuid4()
+    held.add(document_uuid)
+
+    with caplog.at_level(logging.INFO):
+        ingest_tasks.ingest_document(str(document_uuid))
+
+    assert sent == [([str(document_uuid)], 2704)]  # 2699 s left + 5 s margin
+    assert f"Document {document_uuid} is being ingested; checking again" in caplog.text
+    assert held == {document_uuid}  # still the other run's lock
+
+
+def test_the_lock_is_held_during_the_run_and_released_after(
+    monkeypatch: pytest.MonkeyPatch, held: set[UUID]
+) -> None:
+    during: list[bool] = []
+
+    async def run(document_uuid: UUID) -> None:
+        during.append(document_uuid in held)
+
+    monkeypatch.setattr(ingest_tasks, "_ingest", run)
+
+    ingest_tasks.ingest_document(str(uuid4()))
+
+    assert during == [True]
+    assert held == set()
+
+
+def test_each_retry_takes_the_lock_and_it_is_released_at_the_end(
+    monkeypatch: pytest.MonkeyPatch, held: set[UUID]
+) -> None:
+    attempts: list[bool] = []
+
+    async def always_down(document_uuid: UUID) -> None:
+        attempts.append(document_uuid in held)
+        raise ConnectionError("qdrant down")
+
+    async def mark_failed(document_uuid: UUID, error: str) -> None:
+        assert document_uuid in held  # marked failed before letting others in
+
+    monkeypatch.setattr(ingest_tasks, "_ingest", always_down)
+    monkeypatch.setattr(ingest_tasks, "_mark_failed", mark_failed)
+
+    ingest_tasks.ingest_document.apply(args=[str(uuid4())])
+
+    assert attempts == [True] * 6  # no retry was skipped as a duplicate
+    assert held == set()

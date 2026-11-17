@@ -66,6 +66,11 @@ DOCLING_EXTENSIONS = {".txt": ".md"}
 # --- Ingestion ---
 #: First retry delay; each retry doubles it (10 s, 20 s, 40 s, 80 s, 160 s).
 INGEST_RETRY_BASE_SECONDS = 10
+#: One run per document at a time. Longer than the slowest ingest, shorter than
+#: Redis's 1 h visibility timeout, so a crashed run's lock is gone on restore.
+INGEST_LOCK_SECONDS = 50 * 60
+#: A message that finds the lock taken runs again this long after it expires.
+INGEST_RECHECK_MARGIN_SECONDS = 5
 
 # --- Vector store (Qdrant) ---
 DENSE_VECTOR_NAME = "dense"
