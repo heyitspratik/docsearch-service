@@ -34,6 +34,7 @@ from app.constants.enums import (
     ErrorCode,
     HealthStatus,
     LogLevel,
+    ScoreKind,
     SearchType,
     TaskQueue,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "QdrantMessages",
     "RedisMessages",
     "S3Messages",
+    "ScoreKind",
     "SearchType",
     "TaskQueue",
     "UploadMessages",

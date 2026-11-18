@@ -24,6 +24,7 @@ from app.schemas.response.health_response import (
     HealthResponse,
     VersionResponse,
 )
+from app.schemas.response.search_response import SearchResponse
 from app.schemas.response.user_response import UserResponse
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "ErrorInfo",
     "ErrorResponse",
     "HealthResponse",
+    "SearchResponse",
     "UploadedFileResponse",
     "UserResponse",
     "VersionResponse",

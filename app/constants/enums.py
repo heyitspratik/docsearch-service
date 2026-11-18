@@ -74,6 +74,15 @@ class SearchType(StrEnum):
     HYBRID = "hybrid"
 
 
+class ScoreKind(StrEnum):
+    """What a search score means, so it is never compared across kinds."""
+
+    #: BM25 with IDF: unbounded, only comparable within one query.
+    BM25 = "bm25"
+    #: Cross-encoder relevance after a sigmoid: 0 to 1.
+    RERANK = "rerank"
+
+
 class ErrorCode(StrEnum):
     """Stable codes clients branch on, returned in every error response."""
 
