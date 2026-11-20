@@ -1,13 +1,29 @@
 """Response models for search."""
 
-from pydantic import BaseModel
+from uuid import UUID
 
-from app.constants import ScoreKind
-from app.helpers.vector_store_helper import SearchHit
+from pydantic import BaseModel, Field
+
+from app.constants import ChunkType, ScoreKind, SearchType
+
+
+class SearchHitResponse(BaseModel):
+    """One chunk found, with where it came from."""
+
+    document_uuid: UUID
+    filename: str
+    page_start: int | None = Field(description="None for TXT and DOCX")
+    page_end: int | None
+    chunk_type: ChunkType
+    text: str
+    score: float
 
 
 class SearchResponse(BaseModel):
     """The hits, best first, and what their scores mean."""
 
-    score_kind: ScoreKind
-    hits: list[SearchHit]
+    type: SearchType
+    score_kind: ScoreKind = Field(
+        description="bm25: unbounded, compare within one search only; rerank: 0 to 1"
+    )
+    hits: list[SearchHitResponse]

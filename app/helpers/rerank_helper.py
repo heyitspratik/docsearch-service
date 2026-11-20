@@ -3,8 +3,9 @@
 import math
 from collections.abc import Sequence
 from functools import cache
-from typing import Protocol
+from typing import Annotated, Protocol
 
+from fastapi import Depends
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 from app.settings import get_settings
@@ -42,3 +43,6 @@ def get_reranker() -> Reranker:
     """One reranker per process; loading it takes a few seconds."""
     settings = get_settings()
     return FastEmbedReranker(settings.RERANKER_MODEL, settings.EMBEDDING_CACHE_DIR)
+
+
+RerankerDep = Annotated[Reranker, Depends(get_reranker)]

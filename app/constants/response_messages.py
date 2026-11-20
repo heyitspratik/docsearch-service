@@ -137,3 +137,9 @@ class DocumentMessages:
     STATUS_FETCHED = "Document status fetched"
     DELETE_ACCEPTED = "Document deleted; its files and search data are being removed"
     NOT_FOUND = "Document not found"
+
+
+class SearchMessages:
+    """Messages returned by the search endpoint."""
+
+    RESULTS_FETCHED = "Search results fetched"

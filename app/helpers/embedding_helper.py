@@ -2,8 +2,9 @@
 
 from collections.abc import Sequence
 from functools import cache
-from typing import Protocol
+from typing import Annotated, Protocol
 
+from fastapi import Depends
 from fastembed import SparseTextEmbedding, TextEmbedding
 from pydantic import BaseModel, ConfigDict
 
@@ -115,3 +116,8 @@ def get_sparse_embedder() -> SparseEmbedder:
         settings.EMBEDDING_CACHE_DIR,
         settings.EMBEDDING_BATCH_SIZE,
     )
+
+
+# Sync dependencies run in a thread, so the first load does not block the API.
+DenseEmbedderDep = Annotated[DenseEmbedder, Depends(get_dense_embedder)]
+SparseEmbedderDep = Annotated[SparseEmbedder, Depends(get_sparse_embedder)]

@@ -84,3 +84,7 @@ HNSW_EF_CONSTRUCT = 100
 PAYLOAD_INDEX_FIELDS = ("user_uuid", "document_id")
 #: Points per upsert request; keeps each request a few MB.
 UPSERT_BATCH_SIZE = 256
+
+# --- Search ---
+#: Longest search question accepted; longer text is not a question.
+SEARCH_QUERY_MAX_LENGTH = 1000

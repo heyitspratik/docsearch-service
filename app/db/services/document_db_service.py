@@ -69,6 +69,19 @@ class DocumentDBService:
         )
         return result.scalar_one_or_none()
 
+    async def list_ready_uuids(
+        self, user_uuid: str, document_uuids: Sequence[UUID] | None = None
+    ) -> list[UUID]:
+        """The user's ``ready`` documents, limited to ``document_uuids`` if given."""
+        query = select(DocumentMaster.uuid).where(
+            DocumentMaster.user_uuid == user_uuid,
+            DocumentMaster.status == DocumentStatus.READY,
+        )
+        if document_uuids:
+            query = query.where(DocumentMaster.uuid.in_(document_uuids))
+        result = await self.session.execute(query)
+        return list(result.scalars())
+
     async def list_stuck_queued(self, minutes: int) -> list[UUID]:
         """Documents still ``queued`` ``minutes`` after their last update, oldest first.
 

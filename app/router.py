@@ -8,6 +8,7 @@ shapes from the same paths.
 from fastapi import APIRouter
 
 from app.controllers.document_controller import document_router
+from app.controllers.search_controller import search_router
 from app.controllers.user_controller import user_router
 
 api_router = APIRouter()
@@ -19,6 +20,7 @@ v1_router = APIRouter(prefix="/v1")
 #   v1_router.include_router(document_router, prefix="/documents", tags=["Documents"])
 v1_router.include_router(user_router, prefix="/users", tags=["Users"])
 v1_router.include_router(document_router, prefix="/documents", tags=["Documents"])
+v1_router.include_router(search_router, prefix="/documents", tags=["Search"])
 
 api_router.include_router(v1_router)
 

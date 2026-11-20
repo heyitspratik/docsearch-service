@@ -1,9 +1,12 @@
 """Test stand-ins for the app's interfaces."""
 
 from collections.abc import Sequence
+from uuid import UUID
 
+from app.constants import ChunkType
 from app.exceptions import NotFoundError
 from app.helpers.embedding_helper import SparseVector
+from app.helpers.vector_store_helper import ChunkPayload, ChunkPoint, point_id
 
 
 class InMemoryStorage:
@@ -46,3 +49,85 @@ class FakeSparseEmbedder:
 
     def embed_query(self, text: str) -> SparseVector:
         return SparseVector(indices=[1], values=[1.0])
+
+
+# --- Word-based search fakes: predictable rankings without real models ---
+
+# Each known word is one sparse index; its topic is one dense axis.
+VOCAB = {"annual": 1, "leave": 2, "holiday": 3, "salary": 4, "paid": 5, "month": 6}
+LEAVE_WORDS = {"annual", "leave", "holiday"}
+PAY_WORDS = {"salary", "paid", "month"}
+
+
+def words(text: str) -> set[str]:
+    return {w.strip(".,?").lower() for w in text.split()}
+
+
+def word_dense(text: str) -> list[float]:
+    """[leave words, pay words]; a small base keeps it non-zero, as cosine needs."""
+    found = words(text)
+    return [len(found & LEAVE_WORDS) + 0.1, len(found & PAY_WORDS) + 0.1]
+
+
+def word_sparse(text: str) -> SparseVector:
+    """Which vocabulary words appear, each weighing 1."""
+    indices = sorted(VOCAB[w] for w in words(text) if w in VOCAB)
+    return SparseVector(indices=indices, values=[1.0] * len(indices))
+
+
+class WordDenseEmbedder:
+    """``DenseEmbedder`` built on ``word_dense``."""
+
+    def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        return [word_dense(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return word_dense(text)
+
+
+class WordSparseEmbedder:
+    """``SparseEmbedder`` built on ``word_sparse``."""
+
+    def embed_passages(self, texts: Sequence[str]) -> list[SparseVector]:
+        return [word_sparse(t) for t in texts]
+
+    def embed_query(self, text: str) -> SparseVector:
+        return word_sparse(text)
+
+
+class WordReranker:
+    """Scores the share of query words a text contains; ``favourite`` always wins."""
+
+    def __init__(self, favourite: str | None = None) -> None:
+        self.favourite = favourite
+        self.calls: list[list[str]] = []
+
+    def rerank(self, query: str, texts: Sequence[str]) -> list[float]:
+        self.calls.append(list(texts))
+        asked = words(query)
+        return [
+            1.0
+            if self.favourite and self.favourite in text
+            else len(asked & words(text)) / len(asked) * 0.9
+            for text in texts
+        ]
+
+
+def word_point(user: str, document: UUID, index: int, text: str) -> ChunkPoint:
+    """A chunk point embedded with the word fakes."""
+    return ChunkPoint(
+        id=point_id(document, index),
+        dense=word_dense(text),
+        sparse=word_sparse(text),
+        payload=ChunkPayload(
+            user_uuid=user,
+            document_id=str(document),
+            filename=f"{document}.txt",
+            chunk_index=index,
+            page_start=None,
+            page_end=None,
+            chunk_type=ChunkType.TEXT,
+            text=text,
+            embedding_model="test/tiny",
+        ),
+    )

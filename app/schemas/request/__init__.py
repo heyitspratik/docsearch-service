@@ -6,4 +6,6 @@ Example:
     from app.schemas.request.document_request import DocumentCreateRequest
 """
 
-__all__: list[str] = []
+from app.schemas.request.search_request import SearchRequest
+
+__all__ = ["SearchRequest"]
