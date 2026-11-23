@@ -1,6 +1,7 @@
 """GET /documents/search: real Postgres for ownership, in-memory Qdrant, fake models."""
 
 from collections.abc import AsyncIterator
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -12,12 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.database.dependency import get_db
 from app.clients.qdrant.dependency import get_vector_store
 from app.clients.qdrant.service import QdrantVectorStore
+from app.clients.redis.dependency import get_cache
+from app.clients.redis.service import RedisCache
 from app.constants import DocumentStatus, SearchType
 from app.db.models import DocumentMaster
+from app.db.services import DocumentDBService
 from app.helpers import AuthenticatedUser, ModelSpec, get_current_user
 from app.helpers.embedding_helper import get_dense_embedder, get_sparse_embedder
 from app.helpers.rerank_helper import get_reranker
 from tests.fakes import (
+    InMemoryRedis,
     WordDenseEmbedder,
     WordReranker,
     WordSparseEmbedder,
@@ -60,6 +65,9 @@ def search_app(
     app.dependency_overrides[get_dense_embedder] = WordDenseEmbedder
     app.dependency_overrides[get_sparse_embedder] = WordSparseEmbedder
     app.dependency_overrides[get_reranker] = WordReranker
+    # One cache for the whole test, so repeat searches can hit it.
+    cache = RedisCache(cast(Any, InMemoryRedis()))
+    app.dependency_overrides[get_cache] = lambda: cache
     return app
 
 
@@ -216,3 +224,26 @@ async def test_rejects_bad_parameters(
     response = await client.get(URL, params=params)
 
     assert response.status_code == 422
+
+
+async def hit_ids(client: AsyncClient, query: str) -> list[str]:
+    response = await client.get(URL, params={"query": query, "type": "keyword"})
+    return [hit["document_uuid"] for hit in response.json()["payload"]["hits"]]
+
+
+@pytest.mark.usefixtures("search_app")
+async def test_cached_results_follow_status_changes(
+    client: AsyncClient, db_session: AsyncSession, vectors: QdrantVectorStore
+) -> None:
+    documents = DocumentDBService(db_session)
+    leave = await add_document(db_session, vectors, "annual leave")
+    pay = await add_document(
+        db_session, vectors, "salary paid", status=DocumentStatus.INDEXING
+    )
+    assert await hit_ids(client, "salary") == []
+
+    # One leaves and one arrives: the count stays 1, only updated_at moves.
+    await documents.update_document(leave.uuid, status=DocumentStatus.DELETED)
+    await documents.update_document(pay.uuid, status=DocumentStatus.READY)
+
+    assert await hit_ids(client, "salary") == [str(pay.uuid)]

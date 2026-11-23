@@ -88,3 +88,5 @@ UPSERT_BATCH_SIZE = 256
 # --- Search ---
 #: Longest search question accepted; longer text is not a question.
 SEARCH_QUERY_MAX_LENGTH = 1000
+#: Prefix of every search cache key; bump the version when a cached format changes.
+CACHE_KEY_PREFIX = "search:v1"

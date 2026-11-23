@@ -1,7 +1,7 @@
 """Queries on document_master and document_chunk."""
 
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -69,18 +69,18 @@ class DocumentDBService:
         )
         return result.scalar_one_or_none()
 
-    async def list_ready_uuids(
+    async def list_ready(
         self, user_uuid: str, document_uuids: Sequence[UUID] | None = None
-    ) -> list[UUID]:
-        """The user's ``ready`` documents, limited to ``document_uuids`` if given."""
-        query = select(DocumentMaster.uuid).where(
+    ) -> list[tuple[UUID, datetime]]:
+        """The user's ``ready`` documents as (uuid, updated_at), limited if given."""
+        query = select(DocumentMaster.uuid, DocumentMaster.updated_at).where(
             DocumentMaster.user_uuid == user_uuid,
             DocumentMaster.status == DocumentStatus.READY,
         )
         if document_uuids:
             query = query.where(DocumentMaster.uuid.in_(document_uuids))
         result = await self.session.execute(query)
-        return list(result.scalars())
+        return [(row.uuid, row.updated_at) for row in result]
 
     async def list_stuck_queued(self, minutes: int) -> list[UUID]:
         """Documents still ``queued`` ``minutes`` after their last update, oldest first.

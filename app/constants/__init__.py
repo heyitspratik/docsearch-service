@@ -6,6 +6,7 @@ so importing ``app.constants`` stays cheap for the API.
 
 from app.constants.constants import (
     ASYNC_DRIVERS,
+    CACHE_KEY_PREFIX,
     DENSE_VECTOR_NAME,
     DOCLING_EXTENSIONS,
     HNSW_EF_CONSTRUCT,
@@ -59,6 +60,7 @@ from app.constants.response_messages import (
 
 __all__ = [
     "ASYNC_DRIVERS",
+    "CACHE_KEY_PREFIX",
     "DENSE_VECTOR_NAME",
     "DOCLING_EXTENSIONS",
     "HNSW_EF_CONSTRUCT",

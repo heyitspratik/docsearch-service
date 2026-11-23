@@ -7,6 +7,7 @@ from fastapi_utils.cbv import cbv
 
 from app.clients.database.dependency import DBSession
 from app.clients.qdrant.dependency import VectorStoreDep
+from app.clients.redis.dependency import CacheDep
 from app.constants import SearchMessages
 from app.helpers import CurrentUser
 from app.helpers.embedding_helper import DenseEmbedderDep, SparseEmbedderDep
@@ -36,13 +37,14 @@ class SearchController:
         sparse: SparseEmbedderDep,
         reranker: RerankerDep,
         vectors: VectorStoreDep,
+        cache: CacheDep,
     ) -> BaseResponse[SearchResponse]:
         """Search your ``ready`` documents and return the best 5 chunks.
 
         Returns:
             BaseResponse[SearchResponse]: The hits, best first, and their score kind.
         """
-        service = SearchService(session, dense, sparse, reranker, vectors)
+        service = SearchService(session, dense, sparse, reranker, vectors, cache)
         result = await service.search(user, request)
         return BaseResponse(
             message=SearchMessages.RESULTS_FETCHED,

@@ -4,18 +4,26 @@ The ``ready`` lookup is faked here; ``tests/api/test_search.py`` runs it on Post
 """
 
 from collections.abc import Sequence
-from typing import cast
+from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.qdrant.service import QdrantVectorStore
+from app.clients.redis.service import RedisCache
 from app.constants import ScoreKind, SearchType
 from app.helpers import AuthenticatedUser
 from app.schemas.request import SearchRequest
 from app.services.search_service import SearchService
-from tests.fakes import WordDenseEmbedder, WordReranker, WordSparseEmbedder
+from tests.fakes import (
+    DownRedis,
+    InMemoryRedis,
+    WordDenseEmbedder,
+    WordReranker,
+    WordSparseEmbedder,
+)
 from tests.fakes import word_point as point
 
 pytestmark = pytest.mark.filterwarnings("ignore:Payload indexes have no effect")
@@ -23,30 +31,40 @@ pytestmark = pytest.mark.filterwarnings("ignore:Payload indexes have no effect")
 USER_A = AuthenticatedUser(id="user-a", username="a")
 USER_B = AuthenticatedUser(id="user-b", username="b")
 LEAVE_DOC, PAY_DOC, OTHER_USER_DOC = uuid4(), uuid4(), uuid4()
+UPDATED_AT = datetime(2026, 11, 20, 10, 0, tzinfo=UTC)
 
 
 def make_service(
     vectors: QdrantVectorStore,
     ready: dict[str, list[UUID]],
     reranker: WordReranker | None = None,
+    cache: RedisCache | None = None,
+    dense: WordDenseEmbedder | None = None,
+    sparse: WordSparseEmbedder | None = None,
 ) -> SearchService:
-    """A service whose ``ready`` lookup answers from ``ready``, as Postgres would."""
+    """A service whose ``ready`` lookup answers from ``ready``, as Postgres would.
+
+    ``ready`` is read on every search, so a test can change it between searches.
+    """
     # No session is needed: the only query it makes is replaced below.
     service = SearchService(
         cast(AsyncSession, None),
-        WordDenseEmbedder(),
-        WordSparseEmbedder(),
+        dense or WordDenseEmbedder(),
+        sparse or WordSparseEmbedder(),
         reranker or WordReranker(),
         vectors,
+        cache or RedisCache(None),
     )
 
-    async def list_ready_uuids(
+    async def list_ready(
         user_uuid: str, document_uuids: Sequence[UUID] | None = None
-    ) -> list[UUID]:
+    ) -> list[tuple[UUID, datetime]]:
         owned = ready.get(user_uuid, [])
-        return [d for d in owned if not document_uuids or d in document_uuids]
+        return [
+            (d, UPDATED_AT) for d in owned if not document_uuids or d in document_uuids
+        ]
 
-    service.document_db.list_ready_uuids = list_ready_uuids  # type: ignore[method-assign]
+    service.document_db.list_ready = list_ready  # type: ignore[method-assign]
     return service
 
 
@@ -238,3 +256,145 @@ async def test_reranks_at_most_the_candidate_count(
     await service.search(USER_A, request("annual leave", search_type))
 
     assert len(reranker.calls[0]) == 20
+
+
+# --- Caching ---
+
+
+@pytest.fixture
+def redis() -> InMemoryRedis:
+    return InMemoryRedis()
+
+
+@pytest.fixture
+async def indexed(vectors: QdrantVectorStore) -> QdrantVectorStore:
+    await vectors.upsert(
+        [
+            point(USER_A.id, LEAVE_DOC, 0, "Staff get annual leave every year."),
+            point(USER_A.id, PAY_DOC, 0, "The salary is paid each month."),
+            point(USER_B.id, OTHER_USER_DOC, 0, "Annual leave and holiday rules."),
+        ]
+    )
+    return vectors
+
+
+@pytest.mark.parametrize("search_type", list(SearchType))
+async def test_repeat_search_is_served_from_the_cache(
+    indexed: QdrantVectorStore, redis: InMemoryRedis, search_type: SearchType
+) -> None:
+    dense, sparse, reranker = WordDenseEmbedder(), WordSparseEmbedder(), WordReranker()
+    service = make_service(
+        indexed,
+        {USER_A.id: [LEAVE_DOC, PAY_DOC]},
+        reranker,
+        RedisCache(cast(Any, redis)),
+        dense,
+        sparse,
+    )
+
+    first = await service.search(USER_A, request("Annual leave", search_type))
+    second = await service.search(USER_A, request("  annual   LEAVE ", search_type))
+
+    assert second == first
+    # The second search used no model at all.
+    assert len(dense.queries) + len(sparse.queries) <= 2
+    assert len(reranker.calls) <= 1
+
+
+async def test_ttls_follow_the_settings(
+    indexed: QdrantVectorStore, redis: InMemoryRedis
+) -> None:
+    service = make_service(
+        indexed, {USER_A.id: [LEAVE_DOC]}, cache=RedisCache(cast(Any, redis))
+    )
+
+    await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+
+    ttls = {key.split(":")[2]: ttl for key, ttl in redis.ttls.items()}
+    assert ttls == {"vec": 7 * 24 * 3600, "res": 3600}
+
+
+async def test_a_document_becoming_ready_makes_old_results_miss(
+    indexed: QdrantVectorStore, redis: InMemoryRedis
+) -> None:
+    ready = {USER_A.id: [LEAVE_DOC]}
+    service = make_service(indexed, ready, cache=RedisCache(cast(Any, redis)))
+
+    before = await service.search(USER_A, request("salary", SearchType.KEYWORD))
+    ready[USER_A.id].append(PAY_DOC)
+    after = await service.search(USER_A, request("salary", SearchType.KEYWORD))
+
+    assert before.hits == []
+    assert [hit.document_uuid for hit in after.hits] == [PAY_DOC]
+
+
+async def test_a_deleted_document_makes_old_results_miss(
+    indexed: QdrantVectorStore, redis: InMemoryRedis
+) -> None:
+    ready = {USER_A.id: [LEAVE_DOC, PAY_DOC]}
+    service = make_service(indexed, ready, cache=RedisCache(cast(Any, redis)))
+
+    before = await service.search(USER_A, request("salary", SearchType.KEYWORD))
+    ready[USER_A.id].remove(PAY_DOC)
+    after = await service.search(USER_A, request("salary", SearchType.KEYWORD))
+
+    assert [hit.document_uuid for hit in before.hits] == [PAY_DOC]
+    assert after.hits == []
+
+
+async def test_results_are_never_shared_between_users(
+    indexed: QdrantVectorStore, redis: InMemoryRedis
+) -> None:
+    service = make_service(
+        indexed,
+        {USER_A.id: [LEAVE_DOC, PAY_DOC], USER_B.id: [OTHER_USER_DOC]},
+        cache=RedisCache(cast(Any, redis)),
+    )
+
+    mine = await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+    theirs = await service.search(USER_B, request("annual leave", SearchType.HYBRID))
+
+    assert {hit.document_uuid for hit in mine.hits} <= {LEAVE_DOC, PAY_DOC}
+    assert [hit.document_uuid for hit in theirs.hits] == [OTHER_USER_DOC]
+
+
+async def test_query_vectors_are_shared_between_users(
+    indexed: QdrantVectorStore, redis: InMemoryRedis
+) -> None:
+    dense = WordDenseEmbedder()
+    service = make_service(
+        indexed,
+        {USER_A.id: [LEAVE_DOC], USER_B.id: [OTHER_USER_DOC]},
+        cache=RedisCache(cast(Any, redis)),
+        dense=dense,
+    )
+
+    await service.search(USER_A, request("annual leave", SearchType.SEMANTIC))
+    await service.search(USER_B, request("Annual Leave", SearchType.SEMANTIC))
+
+    assert dense.queries == ["annual leave"]
+
+
+async def test_reranker_gets_the_query_as_typed(indexed: QdrantVectorStore) -> None:
+    reranker = WordReranker()
+    dense = WordDenseEmbedder()
+    service = make_service(indexed, {USER_A.id: [LEAVE_DOC]}, reranker, dense=dense)
+
+    await service.search(USER_A, request("  Annual  Leave ", SearchType.SEMANTIC))
+
+    # Embedders lowercase anyway; the cross-encoder is case-sensitive.
+    assert dense.queries == ["annual leave"]
+    assert reranker.calls
+
+
+@pytest.mark.parametrize("search_type", list(SearchType))
+async def test_search_works_when_redis_is_down(
+    indexed: QdrantVectorStore, search_type: SearchType
+) -> None:
+    service = make_service(
+        indexed, {USER_A.id: [LEAVE_DOC]}, cache=RedisCache(cast(Any, DownRedis()))
+    )
+
+    result = await service.search(USER_A, request("annual leave", search_type))
+
+    assert [hit.document_uuid for hit in result.hits] == [LEAVE_DOC]

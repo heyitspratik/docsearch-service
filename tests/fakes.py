@@ -3,6 +3,8 @@
 from collections.abc import Sequence
 from uuid import UUID
 
+from redis.exceptions import ConnectionError as RedisConnectionError
+
 from app.constants import ChunkType
 from app.exceptions import NotFoundError
 from app.helpers.embedding_helper import SparseVector
@@ -76,22 +78,30 @@ def word_sparse(text: str) -> SparseVector:
 
 
 class WordDenseEmbedder:
-    """``DenseEmbedder`` built on ``word_dense``."""
+    """``DenseEmbedder`` built on ``word_dense``; records each query it embeds."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
         return [word_dense(t) for t in texts]
 
     def embed_query(self, text: str) -> list[float]:
+        self.queries.append(text)
         return word_dense(text)
 
 
 class WordSparseEmbedder:
-    """``SparseEmbedder`` built on ``word_sparse``."""
+    """``SparseEmbedder`` built on ``word_sparse``; records each query it embeds."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
 
     def embed_passages(self, texts: Sequence[str]) -> list[SparseVector]:
         return [word_sparse(t) for t in texts]
 
     def embed_query(self, text: str) -> SparseVector:
+        self.queries.append(text)
         return word_sparse(text)
 
 
@@ -131,3 +141,31 @@ def word_point(user: str, document: UUID, index: int, text: str) -> ChunkPoint:
             embedding_model="test/tiny",
         ),
     )
+
+
+# --- Redis stand-ins for the search cache ---
+
+
+class InMemoryRedis:
+    """The ``get``/``set`` part of ``redis.asyncio.Redis``; records each TTL."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.ttls: dict[str, int] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int) -> None:
+        self.values[key] = value
+        self.ttls[key] = ex
+
+
+class DownRedis:
+    """A Redis that is unreachable: every call fails like a lost connection."""
+
+    async def get(self, key: str) -> str | None:
+        raise RedisConnectionError("Connection refused")
+
+    async def set(self, key: str, value: str, ex: int) -> None:
+        raise RedisConnectionError("Connection refused")
