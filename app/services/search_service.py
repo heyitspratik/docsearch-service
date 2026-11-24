@@ -2,10 +2,10 @@
 
 import asyncio
 import json
-import time
 from datetime import datetime
 from uuid import UUID
 
+from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.qdrant.service import QdrantVectorStore
@@ -17,12 +17,14 @@ from app.helpers.cache_helper import normalize_query, result_key, vector_key
 from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder, SparseVector
 from app.helpers.rerank_helper import Reranker
 from app.helpers.vector_store_helper import SearchHit
-from app.log import get_logger
+from app.log import get_logger, log_duration
 from app.schemas.request import SearchRequest
 from app.schemas.response import SearchHitResponse, SearchResponse
 from app.settings import get_settings
 
 logger = get_logger(__name__)
+# A no-op until OpenTelemetry is configured (Phase 7.1); then spans are exported.
+tracer = trace.get_tracer(__name__)
 
 
 class SearchService:
@@ -50,6 +52,7 @@ class SearchService:
         self.vectors = vectors
         self.cache = cache
 
+    @log_duration("Search")
     async def search(
         self, user: AuthenticatedUser, request: SearchRequest
     ) -> SearchResponse:
@@ -75,6 +78,7 @@ class SearchService:
         if cached is not None:
             logger.info(f"Search {request.type.value}: result cache hit")
             return SearchResponse.model_validate_json(cached)
+        logger.info(f"Search {request.type.value}: result cache miss")
 
         ready_ids = [document_uuid for document_uuid, _ in ready]
         hits = await self._retrieve(
@@ -146,6 +150,8 @@ class SearchService:
                 limit=candidates,
             )
 
+        if not hits:
+            return []
         reranked = await self._rerank(query, hits)
         return reranked[:top_k]
 
@@ -154,6 +160,7 @@ class SearchService:
         settings = get_settings()
         key = vector_key("dense", settings.EMBEDDING_DENSE_MODEL, normalized)
         cached = await self.cache.get(key)
+        logger.info(f"Dense query vector: cache {'miss' if cached is None else 'hit'}")
         if cached is not None:
             vector: list[float] = json.loads(cached)
             return vector
@@ -169,6 +176,7 @@ class SearchService:
         settings = get_settings()
         key = vector_key("sparse", settings.EMBEDDING_SPARSE_MODEL, normalized)
         cached = await self.cache.get(key)
+        logger.info(f"Sparse query vector: cache {'miss' if cached is None else 'hit'}")
         if cached is not None:
             return SparseVector.model_validate_json(cached)
         vector = await asyncio.to_thread(self.sparse.embed_query, normalized)
@@ -177,17 +185,16 @@ class SearchService:
         )
         return vector
 
+    # The slowest stage (~5 s on CPU), and no library traces it for us.
+    @log_duration("Rerank")
+    @tracer.start_as_current_span("search.rerank")
     async def _rerank(self, query: str, hits: list[SearchHit]) -> list[SearchHit]:
         """Score each candidate against the question; best first."""
-        if not hits:
-            return []
-        started = time.perf_counter()
+        trace.get_current_span().set_attribute("search.candidates", len(hits))
         # The cross-encoder is heavy CPU work; keep it off the event loop.
         scores = await asyncio.to_thread(
             self.reranker.rerank, query, [hit.payload.text for hit in hits]
         )
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        logger.info(f"Reranked {len(hits)} candidates in {elapsed_ms:.0f} ms")
         rescored = [
             hit.model_copy(update={"score": score})
             for hit, score in zip(hits, scores, strict=True)

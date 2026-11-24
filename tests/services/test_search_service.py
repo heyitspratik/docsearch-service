@@ -3,12 +3,19 @@
 The ``ready`` lookup is faked here; ``tests/api/test_search.py`` runs it on Postgres.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.qdrant.service import QdrantVectorStore
@@ -258,6 +265,44 @@ async def test_reranks_at_most_the_candidate_count(
     assert len(reranker.calls[0]) == 20
 
 
+# --- Rerank span ---
+
+_SPANS = InMemorySpanExporter()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def tracer_provider() -> None:
+    """A real tracer that keeps spans in memory; set once, as OpenTelemetry allows."""
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(_SPANS))
+    trace.set_tracer_provider(provider)
+
+
+@pytest.fixture
+def spans() -> InMemorySpanExporter:
+    _SPANS.clear()
+    return _SPANS
+
+
+@pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+async def test_rerank_is_traced_as_a_span(
+    service: SearchService, spans: InMemorySpanExporter, search_type: SearchType
+) -> None:
+    await service.search(USER_A, request("annual leave", search_type))
+
+    (span,) = spans.get_finished_spans()
+    assert span.name == "search.rerank"
+    assert span.attributes == {"search.candidates": 2}
+
+
+async def test_keyword_search_has_no_rerank_span(
+    service: SearchService, spans: InMemorySpanExporter
+) -> None:
+    await service.search(USER_A, request("annual leave", SearchType.KEYWORD))
+
+    assert spans.get_finished_spans() == ()
+
+
 # --- Caching ---
 
 
@@ -398,3 +443,49 @@ async def test_search_works_when_redis_is_down(
     result = await service.search(USER_A, request("annual leave", search_type))
 
     assert [hit.document_uuid for hit in result.hits] == [LEAVE_DOC]
+
+
+async def test_logs_every_cache_hit_and_miss(
+    indexed: QdrantVectorStore, redis: InMemoryRedis, caplog: pytest.LogCaptureFixture
+) -> None:
+    ready = {USER_A.id: [LEAVE_DOC]}
+    service = make_service(indexed, ready, cache=RedisCache(cast(Any, redis)))
+
+    with caplog.at_level(logging.INFO, logger="app.services.search_service"):
+        await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+        new_question = [m for m in caplog.messages if "cache" in m]
+        caplog.clear()
+        ready[USER_A.id].append(PAY_DOC)  # an upload: old results stop matching
+        await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+        after_upload = [m for m in caplog.messages if "cache" in m]
+        caplog.clear()
+        await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+        repeated = [m for m in caplog.messages if "cache" in m]
+
+    assert new_question == [
+        "Search hybrid: result cache miss",
+        "Dense query vector: cache miss",
+        "Sparse query vector: cache miss",
+    ]
+    assert after_upload == [
+        "Search hybrid: result cache miss",
+        "Dense query vector: cache hit",
+        "Sparse query vector: cache hit",
+    ]
+    assert repeated == ["Search hybrid: result cache hit"]
+
+
+async def test_logs_how_long_each_search_and_rerank_took(
+    indexed: QdrantVectorStore, redis: InMemoryRedis, caplog: pytest.LogCaptureFixture
+) -> None:
+    service = make_service(
+        indexed, {USER_A.id: [LEAVE_DOC]}, cache=RedisCache(cast(Any, redis))
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.services.search_service"):
+        await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+        await service.search(USER_A, request("annual leave", SearchType.HYBRID))
+
+    timings = [m.split(" took ")[0] for m in caplog.messages if " took " in m]
+    # A miss reranks inside the search; the cached repeat skips the reranker.
+    assert timings == ["Rerank", "Search", "Search"]
