@@ -84,6 +84,9 @@ HNSW_EF_CONSTRUCT = 100
 PAYLOAD_INDEX_FIELDS = ("user_uuid", "document_id")
 #: Points per upsert request; keeps each request a few MB.
 UPSERT_BATCH_SIZE = 256
+#: Re-index catch-up also takes documents ready this long before it started,
+#: in case the worker's clock is a little behind.
+REINDEX_CATCH_UP_MARGIN_SECONDS = 60
 
 # --- Search ---
 #: Longest search question accepted; longer text is not a question.

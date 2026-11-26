@@ -62,7 +62,7 @@ class QdrantVectorStore:
             RuntimeError: The alias points to another model's collection.
         """
         expected = collection_name(self.alias, spec.name)
-        current = await self._alias_target()
+        current = await self.alias_target()
         if current == expected:
             return
         if current is not None:
@@ -75,7 +75,7 @@ class QdrantVectorStore:
                 )
             )
 
-        await self._create_collection(expected, spec)
+        await self.create_collection(expected, spec)
         # Creating an alias that already exists is not an error, so two
         # processes starting together both succeed.
         await self.client.update_collection_aliases(
@@ -210,7 +210,7 @@ class QdrantVectorStore:
             for point in points
         ]
 
-    async def _alias_target(self) -> str | None:
+    async def alias_target(self) -> str | None:
         """The collection the alias points to, or None if there is no alias."""
         response = await self.client.get_aliases()
         for alias in response.aliases:
@@ -218,7 +218,28 @@ class QdrantVectorStore:
                 return alias.collection_name
         return None
 
-    async def _create_collection(self, name: str, spec: ModelSpec) -> None:
+    async def switch_alias(self, collection: str) -> None:
+        """Point the alias at ``collection`` in one step, so it is never missing."""
+        await self.client.update_collection_aliases(
+            change_aliases_operations=[
+                models.DeleteAliasOperation(
+                    delete_alias=models.DeleteAlias(alias_name=self.alias)
+                ),
+                models.CreateAliasOperation(
+                    create_alias=models.CreateAlias(
+                        collection_name=collection, alias_name=self.alias
+                    )
+                ),
+            ]
+        )
+        logger.info(f"Qdrant alias {self.alias} now points to {collection}")
+
+    async def delete_collection(self, name: str) -> None:
+        """Drop a collection and its points. A missing one is fine."""
+        await self.client.delete_collection(name)
+        logger.info(f"Qdrant collection {name} deleted")
+
+    async def create_collection(self, name: str, spec: ModelSpec) -> None:
         """Create the collection and its payload indexes, unless it already exists."""
         try:
             await self.client.create_collection(

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import DocumentStatus
 from app.db.models import DocumentChunk, DocumentMaster
+from app.schemas.response import ReadyDocument
 
 
 class DocumentDBService:
@@ -81,6 +82,36 @@ class DocumentDBService:
             query = query.where(DocumentMaster.uuid.in_(document_uuids))
         result = await self.session.execute(query)
         return [(row.uuid, row.updated_at) for row in result]
+
+    async def list_all_ready(
+        self, changed_since: datetime | None = None
+    ) -> list[ReadyDocument]:
+        """Every user's ``ready`` documents, oldest first; for re-indexing.
+
+        Plain columns, not ORM objects, so a second call sees fresh
+        ``updated_at`` values. With ``changed_since``, only documents updated at
+        or after it.
+        """
+        query = select(
+            DocumentMaster.id,
+            DocumentMaster.uuid,
+            DocumentMaster.user_uuid,
+            DocumentMaster.filename,
+            DocumentMaster.updated_at,
+        ).where(DocumentMaster.status == DocumentStatus.READY)
+        if changed_since is not None:
+            query = query.where(DocumentMaster.updated_at >= changed_since)
+        result = await self.session.execute(query.order_by(DocumentMaster.id))
+        return [
+            ReadyDocument(
+                id=row.id,
+                uuid=row.uuid,
+                user_uuid=row.user_uuid,
+                filename=row.filename,
+                updated_at=row.updated_at,
+            )
+            for row in result
+        ]
 
     async def list_stuck_queued(self, minutes: int) -> list[UUID]:
         """Documents still ``queued`` ``minutes`` after their last update, oldest first.

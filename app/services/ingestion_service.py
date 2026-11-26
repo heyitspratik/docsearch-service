@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -14,7 +15,7 @@ from app.db.services import CommonDBService, DocumentDBService
 from app.exceptions import ExtractionError, NotFoundError
 from app.helpers import ObjectStorage, extracted_key
 from app.helpers.chunking_helper import Chunk, chunk_document
-from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder
+from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder, SparseVector
 from app.helpers.extraction_helper import extract
 from app.helpers.vector_store_helper import ChunkPayload, ChunkPoint, point_id
 from app.log import get_logger
@@ -47,8 +48,8 @@ class IngestionService:
         self.vectors = vectors
 
     @staticmethod
-    def _chunk_row(document_id: int, chunk: Chunk) -> DocumentChunk:
-        """A chunk as its ``document_chunk`` row."""
+    def chunk_row(document_id: int, chunk: Chunk) -> DocumentChunk:
+        """A chunk as its ``document_chunk`` row; re-index reuses it."""
         return DocumentChunk(
             document_id=document_id,
             chunk_index=chunk.index,
@@ -59,6 +60,39 @@ class IngestionService:
             heading_path=chunk.heading_path,
             token_count=chunk.token_count,
         )
+
+    @staticmethod
+    def chunk_points(
+        document_uuid: UUID,
+        user_uuid: str,
+        filename: str,
+        model: str,
+        chunks: Sequence[Chunk],
+        dense_vectors: Sequence[list[float]],
+        sparse_vectors: Sequence[SparseVector],
+    ) -> list[ChunkPoint]:
+        """Each chunk with its vectors and payload, as Qdrant stores it."""
+        return [
+            ChunkPoint(
+                id=point_id(document_uuid, chunk.index),
+                dense=dense_vector,
+                sparse=sparse_vector,
+                payload=ChunkPayload(
+                    user_uuid=user_uuid,
+                    document_id=str(document_uuid),
+                    filename=filename,
+                    chunk_index=chunk.index,
+                    page_start=chunk.page_start,
+                    page_end=chunk.page_end,
+                    chunk_type=chunk.chunk_type,
+                    text=chunk.text,
+                    embedding_model=model,
+                ),
+            )
+            for chunk, dense_vector, sparse_vector in zip(
+                chunks, dense_vectors, sparse_vectors, strict=True
+            )
+        ]
 
     async def ingest(self, document_uuid: UUID) -> None:
         """Process one document. Missing, deleted and ready documents are skipped.
@@ -142,32 +176,20 @@ class IngestionService:
 
         if not await self._set_stage(document_uuid, DocumentStatus.INDEXING):
             return
-        points = [
-            ChunkPoint(
-                id=point_id(document_uuid, chunk.index),
-                dense=dense_vector,
-                sparse=sparse_vector,
-                payload=ChunkPayload(
-                    user_uuid=document["user_uuid"],
-                    document_id=str(document_uuid),
-                    filename=document["filename"],
-                    chunk_index=chunk.index,
-                    page_start=chunk.page_start,
-                    page_end=chunk.page_end,
-                    chunk_type=chunk.chunk_type,
-                    text=chunk.text,
-                    embedding_model=model,
-                ),
-            )
-            for chunk, dense_vector, sparse_vector in zip(
-                chunks, dense_vectors, sparse_vectors, strict=True
-            )
-        ]
+        points = self.chunk_points(
+            document_uuid,
+            document["user_uuid"],
+            document["filename"],
+            model,
+            chunks,
+            dense_vectors,
+            sparse_vectors,
+        )
         # An earlier, failed attempt may have left points; start clean.
         await self.vectors.delete_document(document_uuid)
         await self.vectors.upsert(points)
         await self.document_db.replace_chunks(
-            document["id"], [self._chunk_row(document["id"], chunk) for chunk in chunks]
+            document["id"], [self.chunk_row(document["id"], chunk) for chunk in chunks]
         )
         ready = await self.document_db.update_document(
             document_uuid,

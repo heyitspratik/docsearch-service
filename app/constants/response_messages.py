@@ -122,6 +122,16 @@ class IngestionMessages:
     RETRIES_EXHAUSTED = "Processing failed after {attempts} attempts. Upload it again"
 
 
+class ReindexMessages:
+    """Why a re-index stopped before switching the alias."""
+
+    ALREADY_ON_MODEL = "Alias {alias} already points to {collection}; nothing to do"
+    EXTRACTION_MISSING = (
+        "No saved extraction for {count} ready documents ({documents}); "
+        "the alias was not switched"
+    )
+
+
 class EmbeddingMessages:
     """Problems with the configured embedding model."""
 
