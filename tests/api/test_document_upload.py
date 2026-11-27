@@ -1,18 +1,21 @@
 """POST /api/v1/documents/upload against a real Postgres (see ``db_session``)."""
 
+import hashlib
 from collections.abc import AsyncIterator, Iterable
+from typing import Any
 from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.database.dependency import get_db
 from app.clients.s3.dependency import get_storage
 from app.constants import DocumentStatus
 from app.db.models import DocumentMaster
+from app.db.services import DocumentDBService
 from app.helpers import AuthenticatedUser, get_current_user
 from app.services import document_service
 from app.settings import Settings
@@ -20,6 +23,9 @@ from tests.fakes import InMemoryStorage
 
 URL = "/api/v1/documents/upload"
 USER = AuthenticatedUser(id="94008daa-a0a9-44d6-bb8a-08c0e7ab45cf", username="demo")
+OTHER_USER = AuthenticatedUser(
+    id="0b3c7e52-1f4a-4d9e-8c6b-2a7d5e9f1c34", username="other"
+)
 PDF = b"%PDF-1.7\n%%EOF"
 
 
@@ -167,6 +173,161 @@ async def test_folder_part_of_a_filename_is_dropped(
     )
 
     assert response.json()["payload"][0]["filename"] == "report.pdf"
+
+
+TXT = b"Staff get twenty days of paid leave."
+
+
+async def upload(client: AsyncClient, *files: tuple[str, bytes, str]) -> list[Any]:
+    """POST the files; the per-file results (202) or the error details (400)."""
+    response = await client.post(URL, files=[("files", file) for file in files])
+    body = response.json()
+    if response.status_code == 202:
+        return list(body["payload"])
+    return list(body["detail"]["errors"])
+
+
+async def rows_with(db_session: AsyncSession, content: bytes) -> list[DocumentMaster]:
+    """Every document row holding exactly these bytes, any user or status."""
+    digest = hashlib.sha256(content).hexdigest()
+    result = await db_session.scalars(
+        select(DocumentMaster).where(DocumentMaster.content_hash == digest)
+    )
+    return list(result)
+
+
+@pytest.mark.integration
+async def test_same_file_again_is_rejected_as_a_duplicate(
+    upload_app: FastAPI,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    storage: InMemoryStorage,
+    enqueued: list[UUID],
+) -> None:
+    [first] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+
+    # Renamed, but the same bytes; the only file, so the upload is a 400.
+    [error] = await upload(client, ("report-copy.pdf", PDF, "application/pdf"))
+
+    assert error["message"] == "Already uploaded as report.pdf"
+    assert [row.uuid for row in await rows_with(db_session, PDF)] == [
+        UUID(first["document_uuid"])
+    ]
+    assert len(storage.objects) == 1
+    assert enqueued == [UUID(first["document_uuid"])]
+
+
+@pytest.mark.integration
+async def test_duplicate_next_to_a_new_file_points_at_the_existing_document(
+    upload_app: FastAPI, client: AsyncClient, enqueued: list[UUID]
+) -> None:
+    [first] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+
+    duplicate, new = await upload(
+        client,
+        ("report-copy.pdf", PDF, "application/pdf"),
+        ("notes.txt", TXT, "text/plain"),
+    )
+
+    assert duplicate == {
+        "filename": "report-copy.pdf",
+        "accepted": False,
+        "document_uuid": first["document_uuid"],
+        "status": None,
+        "error": "Already uploaded as report.pdf",
+    }
+    assert new["accepted"] is True
+    # The duplicate is not sent for ingestion again.
+    assert enqueued == [UUID(first["document_uuid"]), UUID(new["document_uuid"])]
+
+
+@pytest.mark.integration
+async def test_same_file_twice_in_one_upload_is_kept_once(
+    upload_app: FastAPI,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    storage: InMemoryStorage,
+) -> None:
+    first, second = await upload(
+        client,
+        ("report.pdf", PDF, "application/pdf"),
+        ("report (1).pdf", PDF, "application/pdf"),
+    )
+
+    assert first["accepted"] is True
+    assert second["accepted"] is False
+    assert second["document_uuid"] == first["document_uuid"]
+    assert len(await rows_with(db_session, PDF)) == 1
+    assert len(storage.objects) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("status", [DocumentStatus.FAILED, DocumentStatus.DELETED])
+async def test_file_can_be_uploaded_again_after_it_failed_or_was_deleted(
+    upload_app: FastAPI,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    status: DocumentStatus,
+) -> None:
+    [first] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+    await db_session.execute(
+        update(DocumentMaster)
+        .where(DocumentMaster.uuid == UUID(first["document_uuid"]))
+        .values(status=status)
+    )
+
+    [again] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+
+    assert again["accepted"] is True
+    assert again["document_uuid"] != first["document_uuid"]
+
+
+@pytest.mark.integration
+async def test_another_user_may_upload_the_same_file(
+    upload_app: FastAPI, client: AsyncClient
+) -> None:
+    [mine] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+    upload_app.dependency_overrides[get_current_user] = lambda: OTHER_USER
+
+    [theirs] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+
+    assert mine["accepted"] is theirs["accepted"] is True
+
+
+@pytest.mark.integration
+async def test_upload_losing_a_race_is_a_duplicate_and_leaves_no_file(
+    upload_app: FastAPI,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    storage: InMemoryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    [winner] = await upload(client, ("report.pdf", PDF, "application/pdf"))
+    files_before = set(storage.objects)
+    lookup = DocumentDBService.get_live_by_hash
+    checks: list[str] = []
+
+    async def miss_the_first_check(self: DocumentDBService, *args: Any) -> Any:
+        """The first check runs before the winner's row exists, as in a race."""
+        checks.append("check")
+        return None if len(checks) == 1 else await lookup(self, *args)
+
+    monkeypatch.setattr(DocumentDBService, "get_live_by_hash", miss_the_first_check)
+
+    loser, other = await upload(
+        client,
+        ("report.pdf", PDF, "application/pdf"),
+        ("notes.txt", TXT, "text/plain"),
+    )
+
+    assert loser["accepted"] is False
+    assert loser["document_uuid"] == winner["document_uuid"]
+    # Only the loser's insert was undone; the other file still went through.
+    assert other["accepted"] is True
+    assert len(await rows_with(db_session, PDF)) == 1
+    assert set(storage.objects) - files_before == {
+        key for key in storage.objects if key.endswith(".txt")
+    }
 
 
 async def test_upload_without_a_token_is_a_401(client: AsyncClient) -> None:

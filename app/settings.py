@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     RERANKER_CANDIDATES: int = Field(default=20, ge=1)
     RERANKER_TOP_K: int = Field(default=5, ge=1)
 
+    # --- Search diversity (MMR) ---
+    # Semantic and hybrid fetch this many, then MMR picks RERANKER_CANDIDATES of them.
+    SEARCH_FETCH_CANDIDATES: int = Field(default=60, ge=1)
+    # 1 = relevance only, 0 = variety only.
+    MMR_LAMBDA: float = Field(default=0.7, ge=0, le=1)
+    # Cosine at or above this to an already-picked chunk: a copy, never picked.
+    MMR_DUPLICATE_SIMILARITY: float = Field(default=0.88, gt=0, le=1)
+
     # --- LLM ---
     LLM_ANTHROPIC_API_KEY: str | None = None
     LLM_OPENAI_API_KEY: str | None = None

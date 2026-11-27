@@ -14,7 +14,11 @@ class UploadedFileResponse(BaseModel):
     filename: str
     accepted: bool
     document_uuid: UUID | None = Field(
-        default=None, description="Set when accepted; use it to follow the status"
+        default=None,
+        description=(
+            "ID of the new document if accepted; if a duplicate, ID of the "
+            "existing document; otherwise null"
+        ),
     )
     status: DocumentStatus | None = Field(
         default=None, description="Set when accepted: 1 (queued)"

@@ -105,6 +105,7 @@ class UploadMessages:
     TOO_LARGE = "File is larger than {max_mb} MB"
     INVALID_CONTENT = "File is not a valid {extension} file"
     TOO_MANY_FILES = "At most {max_files} files can be uploaded at once"
+    DUPLICATE = "Already uploaded as {filename}"
     ALL_FILES_REJECTED = "None of the files could be accepted"
 
 

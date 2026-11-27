@@ -1,9 +1,11 @@
 """Business logic for documents: upload, list, metadata, status and delete."""
 
+import hashlib
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
 from fastapi import BackgroundTasks, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.qdrant.service import QdrantVectorStore
@@ -79,7 +81,11 @@ class DocumentService:
                 ],
             )
 
-        accepted = [result.document_uuid for result in results if result.document_uuid]
+        accepted = [
+            result.document_uuid
+            for result in results
+            if result.accepted and result.document_uuid
+        ]
         # Runs after the commit (DBSession is function-scoped), so the rows exist.
         background_tasks.add_task(enqueue_ingestion, accepted)
         return results
@@ -232,22 +238,47 @@ class DocumentService:
                 filename=filename, accepted=False, error=e.message
             )
 
+        content_hash = hashlib.sha256(data).hexdigest()
+        # Also sees rows flushed earlier in this request: a file sent twice is caught.
+        existing = await self.document_db.get_live_by_hash(user.id, content_hash)
+        if existing is not None:
+            return self._duplicate(filename, existing)
+
         document_uuid = uuid4()
         storage_key = original_key(
             user.id, str(document_uuid), file_extension(filename)
         )
+        # Row before file: losing a race to the same file leaves nothing in S3.
+        try:
+            document = await self.document_db.create_document(
+                uuid=document_uuid,
+                user_uuid=user.id,
+                filename=filename,
+                mime_type=mime_type,
+                size_bytes=len(data),
+                storage_key=storage_key,
+                content_hash=content_hash,
+            )
+        except IntegrityError:
+            existing = await self.document_db.get_live_by_hash(user.id, content_hash)
+            if existing is None:
+                raise
+            return self._duplicate(filename, existing)
         await storage.put(storage_key, data, mime_type)
-        document = await self.document_db.create_document(
-            uuid=document_uuid,
-            user_uuid=user.id,
-            filename=filename,
-            mime_type=mime_type,
-            size_bytes=len(data),
-            storage_key=storage_key,
-        )
         return UploadedFileResponse(
             filename=filename,
             accepted=True,
             document_uuid=document.uuid,
             status=DocumentStatus(document.status),
+        )
+
+    @staticmethod
+    def _duplicate(filename: str, existing: DocumentMaster) -> UploadedFileResponse:
+        """A rejected file that the user already has, pointing at that document."""
+        logger.info(f"Upload {filename}: duplicate of document {existing.uuid}")
+        return UploadedFileResponse(
+            filename=filename,
+            accepted=False,
+            document_uuid=existing.uuid,
+            error=UploadMessages.DUPLICATE.format(filename=existing.filename),
         )

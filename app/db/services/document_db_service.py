@@ -28,10 +28,15 @@ class DocumentDBService:
         mime_type: str,
         size_bytes: int,
         storage_key: str,
+        content_hash: str,
     ) -> DocumentMaster:
         """Insert a new document with status ``queued``.
 
         Flushes so the row gets its ``id``; the request's session commits it.
+        Runs in a savepoint, so a failed insert undoes only this row.
+
+        Raises:
+            IntegrityError: The user already has a live document with this hash.
         """
         document = DocumentMaster(
             uuid=uuid,
@@ -40,10 +45,26 @@ class DocumentDBService:
             mime_type=mime_type,
             size_bytes=size_bytes,
             storage_key=storage_key,
+            content_hash=content_hash,
         )
-        self.session.add(document)
-        await self.session.flush()
+        async with self.session.begin_nested():
+            self.session.add(document)
         return document
+
+    async def get_live_by_hash(
+        self, user_uuid: str, content_hash: str
+    ) -> DocumentMaster | None:
+        """The user's document with these exact bytes, unless failed or deleted."""
+        result = await self.session.execute(
+            select(DocumentMaster).where(
+                DocumentMaster.user_uuid == user_uuid,
+                DocumentMaster.content_hash == content_hash,
+                DocumentMaster.status.not_in(
+                    [DocumentStatus.FAILED, DocumentStatus.DELETED]
+                ),
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def list_documents(self, user_uuid: str) -> Sequence[DocumentMaster]:
         """A user's documents, newest first. Deleted ones are left out."""

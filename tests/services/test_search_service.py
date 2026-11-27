@@ -23,6 +23,7 @@ from app.clients.redis.service import RedisCache
 from app.constants import ScoreKind, SearchType
 from app.helpers import AuthenticatedUser
 from app.schemas.request import SearchRequest
+from app.services import search_service
 from app.services.search_service import SearchService
 from tests.fakes import (
     DownRedis,
@@ -81,6 +82,20 @@ def request(
     document_ids: list[UUID] | None = None,
 ) -> SearchRequest:
     return SearchRequest(query=query, type=search_type, document_ids=document_ids)
+
+
+@pytest.fixture
+def without_mmr(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MMR off: the first candidates in Qdrant's order, as before MMR.
+
+    For tests of the rerank steps: the 2-number fake vectors make every
+    "annual leave rule N" chunk identical, so real MMR keeps only one.
+    """
+
+    def first(scores: Sequence[float], vectors: Any, k: int, **_: Any) -> list[int]:
+        return list(range(min(k, len(scores))))
+
+    monkeypatch.setattr(search_service, "mmr_select", first)
 
 
 @pytest.fixture
@@ -193,6 +208,7 @@ async def test_document_ids_cannot_reach_another_users_document(
 
 
 @pytest.mark.parametrize("search_type", list(SearchType))
+@pytest.mark.usefixtures("without_mmr")
 async def test_keeps_at_most_top_k(
     vectors: QdrantVectorStore, search_type: SearchType
 ) -> None:
@@ -231,6 +247,7 @@ async def test_reranker_scores_replace_qdrant_scores(
 
 
 @pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+@pytest.mark.usefixtures("without_mmr")
 async def test_reranker_can_promote_a_low_candidate(
     vectors: QdrantVectorStore, search_type: SearchType
 ) -> None:
@@ -250,6 +267,7 @@ async def test_reranker_can_promote_a_low_candidate(
 
 
 @pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+@pytest.mark.usefixtures("without_mmr")
 async def test_reranks_at_most_the_candidate_count(
     vectors: QdrantVectorStore, search_type: SearchType
 ) -> None:
@@ -263,6 +281,94 @@ async def test_reranks_at_most_the_candidate_count(
     await service.search(USER_A, request("annual leave", search_type))
 
     assert len(reranker.calls[0]) == 20
+
+
+# --- MMR: copies take one place ---
+
+COPY_DOC = uuid4()
+
+
+@pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+async def test_a_copy_in_another_document_takes_one_place(
+    vectors: QdrantVectorStore, search_type: SearchType
+) -> None:
+    text = "Staff get annual leave every year."
+    await vectors.upsert(
+        [
+            point(USER_A.id, LEAVE_DOC, 0, text),
+            # The same text from the PDF version of the file.
+            point(USER_A.id, COPY_DOC, 0, text),
+            point(USER_A.id, PAY_DOC, 0, "The salary is paid each month."),
+        ]
+    )
+    reranker = WordReranker()
+    service = make_service(
+        vectors, {USER_A.id: [LEAVE_DOC, COPY_DOC, PAY_DOC]}, reranker
+    )
+
+    result = await service.search(USER_A, request("annual leave", search_type))
+
+    found = [hit.document_uuid for hit in result.hits]
+    assert len({LEAVE_DOC, COPY_DOC} & set(found)) == 1
+    assert PAY_DOC in found
+    assert len(reranker.calls[0]) == 2
+
+
+@pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+async def test_a_near_copy_is_skipped(
+    vectors: QdrantVectorStore, search_type: SearchType
+) -> None:
+    await vectors.upsert(
+        [
+            point(USER_A.id, LEAVE_DOC, 0, "Staff get annual leave every year."),
+            # Two words changed, as an OCR'd scan of the same page might.
+            point(USER_A.id, COPY_DOC, 0, "Staf get annual leave evry year."),
+        ]
+    )
+    service = make_service(vectors, {USER_A.id: [LEAVE_DOC, COPY_DOC]})
+
+    result = await service.search(USER_A, request("annual leave", search_type))
+
+    assert len(result.hits) == 1
+
+
+@pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+async def test_copies_do_not_crowd_out_a_different_chunk(
+    vectors: QdrantVectorStore, search_type: SearchType
+) -> None:
+    # 25 copies rank above the pay chunk; fetching only 20 would never reach it.
+    copies = [uuid4() for _ in range(25)]
+    await vectors.upsert(
+        [point(USER_A.id, d, 0, "annual leave") for d in copies]
+        + [point(USER_A.id, PAY_DOC, 0, "The salary is paid each month.")]
+    )
+    reranker = WordReranker()
+    service = make_service(vectors, {USER_A.id: [*copies, PAY_DOC]}, reranker)
+
+    await service.search(USER_A, request("annual leave", search_type))
+
+    assert len(reranker.calls[0]) == 2
+    assert "The salary is paid each month." in reranker.calls[0]
+
+
+@pytest.mark.parametrize("search_type", [SearchType.SEMANTIC, SearchType.HYBRID])
+async def test_logs_how_many_candidates_mmr_kept(
+    vectors: QdrantVectorStore,
+    search_type: SearchType,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await vectors.upsert(
+        [
+            point(USER_A.id, LEAVE_DOC, 0, "annual leave"),
+            point(USER_A.id, COPY_DOC, 0, "annual leave"),
+        ]
+    )
+    service = make_service(vectors, {USER_A.id: [LEAVE_DOC, COPY_DOC]})
+
+    with caplog.at_level(logging.INFO):
+        await service.search(USER_A, request("annual leave", search_type))
+
+    assert "MMR kept 1 of 2 candidates" in caplog.messages
 
 
 # --- Rerank span ---

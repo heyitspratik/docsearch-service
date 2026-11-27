@@ -15,6 +15,7 @@ from app.db.services import DocumentDBService
 from app.helpers import AuthenticatedUser
 from app.helpers.cache_helper import normalize_query, result_key, vector_key
 from app.helpers.embedding_helper import DenseEmbedder, SparseEmbedder, SparseVector
+from app.helpers.mmr_helper import mmr_select
 from app.helpers.rerank_helper import Reranker
 from app.helpers.vector_store_helper import SearchHit
 from app.log import get_logger, log_duration
@@ -30,8 +31,9 @@ tracer = trace.get_tracer(__name__)
 class SearchService:
     """Runs one search over a user's ``ready`` documents.
 
-    ``keyword``: BM25 → top k. ``semantic``: dense → candidates → rerank → top k.
-    ``hybrid``: dense + BM25 candidates fused with RRF → rerank → top k.
+    ``keyword``: BM25 → top k. ``semantic``: dense → MMR → rerank → top k.
+    ``hybrid``: dense + BM25 fused with RRF → MMR → rerank → top k. MMR picks
+    the reranker's candidates from a larger fetch, skipping copies.
 
     Query vectors and results are cached in Redis; keys come from ``cache_helper``.
     """
@@ -102,7 +104,8 @@ class SearchService:
         s = get_settings()
         return (
             f"{s.EMBEDDING_DENSE_MODEL}|{s.EMBEDDING_SPARSE_MODEL}|{s.RERANKER_MODEL}"
-            f"|{s.RERANKER_CANDIDATES}|{s.RERANKER_TOP_K}"
+            f"|{s.RERANKER_CANDIDATES}|{s.RERANKER_TOP_K}|{s.SEARCH_FETCH_CANDIDATES}"
+            f"|{s.MMR_LAMBDA}|{s.MMR_DUPLICATE_SIMILARITY}"
         )
 
     @staticmethod
@@ -129,7 +132,7 @@ class SearchService:
         reranker is case-sensitive, so it gets the query as typed.
         """
         settings = get_settings()
-        top_k, candidates = settings.RERANKER_TOP_K, settings.RERANKER_CANDIDATES
+        top_k, fetch = settings.RERANKER_TOP_K, settings.SEARCH_FETCH_CANDIDATES
         query_filter = self.vectors.owner_filter(user_uuid, ready)
 
         if search_type is SearchType.KEYWORD:
@@ -138,22 +141,32 @@ class SearchService:
 
         if search_type is SearchType.SEMANTIC:
             dense = await self._dense_query(normalized)
-            hits = await self.vectors.search_dense(dense, query_filter, candidates)
+            hits = await self.vectors.search_dense(dense, query_filter, fetch)
         else:
             dense = await self._dense_query(normalized)
             sparse = await self._sparse_query(normalized)
             hits = await self.vectors.search_hybrid(
-                dense,
-                sparse,
-                query_filter,
-                prefetch_limit=candidates,
-                limit=candidates,
+                dense, sparse, query_filter, prefetch_limit=fetch, limit=fetch
             )
 
         if not hits:
             return []
-        reranked = await self._rerank(query, hits)
+        reranked = await self._rerank(query, self._diversify(hits))
         return reranked[:top_k]
+
+    @staticmethod
+    def _diversify(hits: list[SearchHit]) -> list[SearchHit]:
+        """MMR: the reranker's candidates, relevant and no two of them copies."""
+        settings = get_settings()
+        picked = mmr_select(
+            [hit.score for hit in hits],
+            [hit.dense or [] for hit in hits],
+            settings.RERANKER_CANDIDATES,
+            lambda_=settings.MMR_LAMBDA,
+            duplicate_similarity=settings.MMR_DUPLICATE_SIMILARITY,
+        )
+        logger.info(f"MMR kept {len(picked)} of {len(hits)} candidates")
+        return [hits[index] for index in picked]
 
     async def _dense_query(self, normalized: str) -> list[float]:
         """The question's meaning vector, from the cache when possible."""

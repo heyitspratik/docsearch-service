@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from http import HTTPStatus
 from itertools import batched
+from typing import cast
 from uuid import UUID
 
 from qdrant_client import AsyncQdrantClient, models
@@ -152,7 +153,10 @@ class QdrantVectorStore:
     async def search_dense(
         self, vector: list[float], query_filter: models.Filter, limit: int
     ) -> list[SearchHit]:
-        """Semantic search: nearest meaning vectors (cosine) through HNSW."""
+        """Semantic search: nearest meaning vectors (cosine) through HNSW.
+
+        Hits carry their dense vector, for MMR.
+        """
         response = await self.client.query_points(
             collection_name=self.alias,
             query=vector,
@@ -160,6 +164,7 @@ class QdrantVectorStore:
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
+            with_vectors=[DENSE_VECTOR_NAME],
         )
         return self._to_hits(response.points)
 
@@ -171,7 +176,10 @@ class QdrantVectorStore:
         prefetch_limit: int,
         limit: int,
     ) -> list[SearchHit]:
-        """Both searches in one call, merged by rank with RRF."""
+        """Both searches in one call, merged by rank with RRF.
+
+        Hits carry their dense vector, for MMR.
+        """
         response = await self.client.query_points(
             collection_name=self.alias,
             prefetch=[
@@ -195,20 +203,31 @@ class QdrantVectorStore:
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
+            with_vectors=[DENSE_VECTOR_NAME],
         )
         return self._to_hits(response.points)
 
     @staticmethod
     def _to_hits(points: Sequence[models.ScoredPoint]) -> list[SearchHit]:
-        """Qdrant's scored points as hits, best first."""
+        """Qdrant's scored points as hits, best first, with the dense vector if sent."""
         return [
             SearchHit(
                 id=str(point.id),
                 score=point.score,
                 payload=ChunkPayload.model_validate(point.payload),
+                dense=QdrantVectorStore._dense_of(point),
             )
             for point in points
         ]
+
+    @staticmethod
+    def _dense_of(point: models.ScoredPoint) -> list[float] | None:
+        """The point's dense vector, or None if the search did not ask for it."""
+        if not isinstance(point.vector, dict):
+            return None
+        dense = point.vector.get(DENSE_VECTOR_NAME)
+        # Our dense vector is a plain list of floats (not sparse, not multi-vector).
+        return cast(list[float], dense) if isinstance(dense, list) else None
 
     async def alias_target(self) -> str | None:
         """The collection the alias points to, or None if there is no alias."""

@@ -57,3 +57,5 @@ class SearchHit(BaseModel):
     id: str
     score: float
     payload: ChunkPayload
+    # The chunk's meaning vector, when the search asked for it (MMR needs it).
+    dense: list[float] | None = None
